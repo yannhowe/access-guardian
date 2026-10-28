@@ -1,0 +1,87 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadSecurityGroups",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeSecurityGroupRules",
+        "ec2:DescribeSecurityGroups"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "RevokeSecurityGroupIngress",
+      "Effect": "Allow",
+      "Action": "ec2:RevokeSecurityGroupIngress",
+      "Resource": "arn:aws:ec2:*:*:security-group/*"
+    },
+    {
+      "Sid": "ReadBucketPublicAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetBucketTagging",
+        "s3:GetBucketPublicAccessBlock"
+      ],
+      "Resource": "arn:aws:s3:::ag-demo-*"
+    },
+    {
+      "Sid": "PutBucketPublicAccessBlock",
+      "Effect": "Allow",
+      "Action": "s3:PutBucketPublicAccessBlock",
+      "Resource": "arn:aws:s3:::ag-demo-*"
+    },
+    {
+      "Sid": "WriteFixLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:*:*:log-group:/aws/lambda/ag-fix-*:*"
+    },
+    {
+      "Sid": "ContainIamUser",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetUser",
+        "iam:ListUserTags",
+        "iam:GetUserPolicy",
+        "iam:ListAttachedUserPolicies",
+        "iam:ListGroupsForUser",
+        "iam:PutUserPolicy"
+      ],
+      "Resource": "arn:aws:iam::*:user/*"
+    },
+    {
+      "Sid": "DenyIamOnUsersExceptContainment",
+      "Effect": "Deny",
+      "NotAction": [
+        "iam:GetUser",
+        "iam:ListUserTags",
+        "iam:GetUserPolicy",
+        "iam:ListAttachedUserPolicies",
+        "iam:ListGroupsForUser",
+        "iam:PutUserPolicy"
+      ],
+      "Resource": "arn:aws:iam::*:user/*"
+    },
+    {
+      "Sid": "DenyIamOffUsers",
+      "Effect": "Deny",
+      "Action": "iam:*",
+      "NotResource": "arn:aws:iam::*:user/*"
+    },
+    {
+      "Sid": "DenyNonIamPutPolicy",
+      "Effect": "Deny",
+      "Action": [
+        "s3:PutBucketPolicy",
+        "s3:PutAccessPointPolicy",
+        "s3:PutAccessPointPolicyForObjectLambda",
+        "s3:PutMultiRegionAccessPointPolicy"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
