@@ -126,7 +126,7 @@ Each fix Lambda has its own role, `ag-fix-<name>`. The IAM tag conditions are in
 
 | Folder and function | Finding key | IAM action | What the handler does |
 | --- | --- | --- | --- |
-| `close-open-port`, function `ag-fix-close-open-port` | `cloud:open_port` | `ec2:RevokeSecurityGroupIngress` | Revokes one ingress rule on one security group when `classifyIngress()` says it is a finding. Protocol is `tcp` or `udp`, one port, one IPv4 CIDR. A verdict of `ok` is `NotAFinding` and is not revoked. |
+| `close-open-port`, function `ag-fix-close-open-port` | `cloud:open_port` | `ec2:RevokeSecurityGroupIngress` | Revokes one ingress rule on one security group when `classifyIngress()` says it is a finding. Protocol is `tcp` or `udp`, one port, one IPv4 CIDR. A verdict of `ok` returns `status` `refused` and is not revoked. |
 | `restore-bucket-public-access-block`, function `ag-fix-restore-bucket-public-access-block` | `cloud:s3_public_access_block_removed` | `s3:PutBucketPublicAccessBlock` | Turns on all four Block Public Access flags for one bucket whose name starts with `ag-demo-`. |
 | `remove-bucket-public-access-block`, function `ag-fix-remove-bucket-public-access-block` | `cloud:s3_public_access_block_drift_public` | `s3:PutBucketPublicAccessBlock` | Removes Block Public Access on bucket `ag-demo-public-10281729` only. The SDK call is `DeletePublicAccessBlockCommand`. AWS authorizes that API with `s3:PutBucketPublicAccessBlock`. |
 

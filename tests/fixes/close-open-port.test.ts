@@ -254,8 +254,14 @@ describe('close-open-port handler', () => {
       expect(result, `apply=${String(apply)}`).toEqual({
         ok: false,
         changed: false,
-        errorCode: 'NotAFinding',
-        errorMessage: 'rule is not a finding under the port rule',
+        status: 'refused',
+        reason: 'rule is not a finding under the port rule',
+        action: ACTION,
+        caseId: 'case-demo-1',
+        securityGroupId: 'sg-demo0001',
+        protocol: 'tcp',
+        port: 443,
+        cidr: '0.0.0.0/0',
       });
       expect(revoked(send), `apply=${String(apply)}`).toEqual([]);
     }

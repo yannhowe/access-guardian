@@ -59,7 +59,7 @@ The client reads `XAI_API_KEY` from the environment. `XAI_MODEL` overrides the d
 ## What to show in the code
 
 - `src/fixes/allow-list.ts`: one entry per fix, one action, one undo line. The fix does not perform the undo.
-- `src/fixes/close-open-port/`: revoke one ingress rule when `classifyIngress()` says it is a finding. A verdict of `ok` is `NotAFinding` and is not revoked. A sensitive port on a `public=true` group is still revoked. Dry-run unless `apply` is true. IAM on the revoke requires `auto-remediate=true` and `purpose=ag-demo-synthetic`. The handler checks `auto-remediate=true` and does not check `purpose`.
+- `src/fixes/close-open-port/`: revoke one ingress rule when `classifyIngress()` says it is a finding. A verdict of `ok` returns `status` `refused` and is not revoked. A sensitive port on a `public=true` group is still revoked. Dry-run unless `apply` is true. IAM on the revoke requires `auto-remediate=true` and `purpose=ag-demo-synthetic`. The handler checks `auto-remediate=true` and does not check `purpose`.
 - `src/fixes/restore-bucket-public-access-block/`: turn the four Block Public Access flags on. IAM has no tag condition and is scoped to `arn:aws:s3:::ag-demo-*`. The handler requires `purpose=ag-demo-synthetic` and `auto-remediate=true`, and it refuses `public=true`.
 - `src/fixes/remove-bucket-public-access-block/`: remove the block on `ag-demo-public-10281729` only. IAM requires `public=true` on that bucket for the mutating action. The handler also requires `auto-remediate=true` and `purpose=ag-demo-synthetic`. The SDK command is `DeletePublicAccessBlockCommand`. The IAM action is `s3:PutBucketPublicAccessBlock`.
 - `infra/main.tf`: one Terraform name per fix. The module always sets the permissions boundary.

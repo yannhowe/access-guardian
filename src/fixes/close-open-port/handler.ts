@@ -79,6 +79,18 @@ export type FixResult =
       changed: false;
       errorCode: string;
       errorMessage: string;
+    }
+  | {
+      ok: false;
+      changed: false;
+      status: 'refused';
+      reason: 'rule is not a finding under the port rule';
+      action: typeof ACTION;
+      caseId: string;
+      securityGroupId: string;
+      protocol: 'tcp' | 'udp';
+      port: number;
+      cidr: string;
     };
 
 type Planned = CloseOpenPortInput;
@@ -179,8 +191,9 @@ export async function handleCloseOpenPort(event: unknown, client: AwsClient): Pr
     return {
       ok: false,
       changed: false,
-      errorCode: 'NotAFinding',
-      errorMessage: 'rule is not a finding under the port rule',
+      status: 'refused',
+      reason: 'rule is not a finding under the port rule',
+      ...body,
     };
   }
 
