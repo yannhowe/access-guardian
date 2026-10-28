@@ -281,9 +281,84 @@ describe('contain-iam-user handler', () => {
     expect(puts(send)[0]?.input.PolicyDocument).toBe(JSON.stringify(EXACT_DENY));
   });
 
+  it('contains a tagged user with Not in HR', async () => {
+    const { client, send } = fakeClient();
+
+    const result = await handleContainIamUser(
+      { ...EVENT, userName: 'notinhr-demo', hrStatus: 'Not in HR', apply: true },
+      client,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: 'ok',
+      changed: true,
+      dryRun: false,
+      action: ACTION,
+      caseId: 'case-06',
+      userName: 'notinhr-demo',
+      policyName: POLICY_NAME,
+      policyDocument: containmentDocument(),
+      reason: 'contained',
+    });
+    expect(puts(send)).toHaveLength(1);
+    expect(puts(send)[0]?.input).toEqual({
+      UserName: 'notinhr-demo',
+      PolicyName: 'ag-containment-deny',
+      PolicyDocument: JSON.stringify(EXACT_DENY),
+    });
+  });
+
+  it('refuses Active and does not call AWS', async () => {
+    const { client, send } = fakeClient();
+
+    const result = await handleContainIamUser({ ...EVENT, hrStatus: 'Active' }, client);
+
+    expect(result).toEqual({
+      ok: false,
+      status: 'refused',
+      changed: false,
+      reason: 'hrStatus must be exactly On leave or exactly Not in HR',
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('refuses an untagged user with Not in HR and does not put', async () => {
+    const { client, send } = fakeClient({ tags: [] });
+
+    const result = await handleContainIamUser({ ...EVENT, hrStatus: 'Not in HR', apply: true }, client);
+
+    expect(result).toEqual({
+      ok: false,
+      status: 'refused',
+      changed: false,
+      reason: 'IAM user is missing tag auto-remediate=true or purpose=ag-demo-synthetic',
+    });
+    expect(puts(send)).toEqual([]);
+  });
+
+  it('does not put on a dry run when hrStatus is Not in HR', async () => {
+    const { client, send } = fakeClient();
+
+    const result = await handleContainIamUser({ ...EVENT, hrStatus: 'Not in HR' }, client);
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: 'ok',
+      changed: false,
+      dryRun: true,
+      reason: 'dry_run',
+      policyName: 'ag-containment-deny',
+      policyDocument: JSON.stringify(EXACT_DENY),
+    });
+    expect(puts(send)).toEqual([]);
+  });
+
   it.each([
-    ['an active user', { ...EVENT, hrStatus: 'Active' }, 'hrStatus must be exactly On leave'],
-    ['a lower case status', { ...EVENT, hrStatus: 'on leave' }, 'hrStatus must be exactly On leave'],
+    ['an active user', { ...EVENT, hrStatus: 'Active' }, 'hrStatus must be exactly On leave or exactly Not in HR'],
+    ['a lower case status', { ...EVENT, hrStatus: 'on leave' }, 'hrStatus must be exactly On leave or exactly Not in HR'],
+    ['a lower case Not in HR', { ...EVENT, hrStatus: 'not in hr' }, 'hrStatus must be exactly On leave or exactly Not in HR'],
+    ['a different Not in HR case', { ...EVENT, hrStatus: 'Not In HR' }, 'hrStatus must be exactly On leave or exactly Not in HR'],
     ['a role ARN', { ...EVENT, userName: 'arn:aws:iam::role/demo-role' }, 'userName matches a role, assumed role, or SSO principal'],
     ['an assumed role', { ...EVENT, userName: 'arn:aws:sts::assumed-role/demo/session' }, 'userName matches a role, assumed role, or SSO principal'],
     ['an SSO user', { ...EVENT, userName: 'AWSReservedSSO_demo_example' }, 'userName matches a role, assumed role, or SSO principal'],
