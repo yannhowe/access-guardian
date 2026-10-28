@@ -36,6 +36,7 @@ resource "aws_iam_user_policy" "vendor_1" {
           }
         }
       },
+      # The state and CloudTrail buckets below were identified by a read-only bucket list.
       {
         Sid    = "DenyExcludedBuckets"
         Effect = "Deny"
@@ -43,6 +44,10 @@ resource "aws_iam_user_policy" "vendor_1" {
         Resource = [
           "arn:aws:s3:::ag-demo-assets-a-10281729",
           "arn:aws:s3:::ag-demo-assets-a-10281729/*",
+          "arn:aws:s3:::ag-tf-state-022076688650-apse1",
+          "arn:aws:s3:::ag-tf-state-022076688650-apse1/*",
+          "arn:aws:s3:::ag-demo-trail-022076688650",
+          "arn:aws:s3:::ag-demo-trail-022076688650/*",
         ]
       },
     ]
