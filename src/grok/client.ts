@@ -1,15 +1,21 @@
 /**
- * The only xAI call in this repo.
+ * Every xAI call in this repo goes through this file.
  *
- * What Grok decides: nothing about the case. This function returns JSON that
- * passed `validate`, or a typed failure.
+ * `extract()` returns JSON that passed `validate`, or a typed failure.
+ * What Grok decides: the JSON object when `validate` returns true.
  * What code decides: whether those facts are usable, and whether any fix runs.
  * On a failure, do not fill in a value. Do not act on the call.
  *
- * Temperature is 0. The timeout is 15 seconds. The API key is `XAI_API_KEY`.
+ * Temperature is 0. The model call times out after 15 seconds.
  * The model is `XAI_MODEL`, or grok-4.7 when that variable is unset.
+ * The API key is `XAI_API_KEY` from the environment when `secretId` is omitted.
+ * When `secretId` is set, the key is read from that Secrets Manager secret.
+ * The daily report passes `XAI_SECRET_ID`. The secret read times out after 10 seconds.
+ * A missing secret, an empty value, or a timeout is `no_key`. The model is not called.
+ * This function does not write the key into the environment.
  * This function does not log the key, the prompt, or the reply.
  */
+import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 
 /** A JSON Schema object. We send it as given. `validate` is the check we trust. */
 export type JsonSchema = Record<string, unknown>;
@@ -35,8 +41,11 @@ const CHAT_COMPLETIONS_URL = 'https://api.x.ai/v1/chat/completions';
 /** Used when XAI_MODEL is unset or blank. grok-4.7 is the current text model. */
 const DEFAULT_MODEL = 'grok-4.7';
 
-/** Hard stop. A slow reply is a failure, not a value we invent. */
+/** Hard stop for the model call. A slow reply is a failure, not a value we invent. */
 const TIMEOUT_MS = 15_000;
+
+/** Hard stop for the Secrets Manager read. The model is not called after this. */
+const SECRET_TIMEOUT_MS = 10_000;
 
 export async function extract<T>(opts: {
   system: string;
@@ -45,9 +54,14 @@ export async function extract<T>(opts: {
   schema: JsonSchema;
   /** Returns true only when `value` is a complete T. Anything else is a mismatch. */
   validate: (value: unknown) => value is T;
+  /**
+   * Secrets Manager secret id. When set, the key comes from that secret.
+   * When omitted, the key is `XAI_API_KEY` from the environment.
+   */
+  secretId?: string;
 }): Promise<ExtractResult<T>> {
-  const apiKey = process.env.XAI_API_KEY?.trim();
-  if (!apiKey) {
+  const apiKey = await readApiKey(opts.secretId);
+  if (apiKey === undefined) {
     return { ok: false, reason: 'no_key' };
   }
 
@@ -122,6 +136,62 @@ export async function extract<T>(opts: {
   }
 
   return { ok: true, value: parsed };
+}
+
+/**
+ * `secretId` selects Secrets Manager. Omitting it selects `XAI_API_KEY`.
+ * A failed secret read does not fall back to the environment.
+ */
+async function readApiKey(secretId: string | undefined): Promise<string | undefined> {
+  if (secretId !== undefined) {
+    return readKeyFromSecret(secretId);
+  }
+  const fromEnv = process.env.XAI_API_KEY?.trim();
+  if (fromEnv === undefined || fromEnv.length === 0) {
+    return undefined;
+  }
+  return fromEnv;
+}
+
+async function readKeyFromSecret(secretId: string): Promise<string | undefined> {
+  const trimmedId = secretId.trim();
+  if (trimmedId.length === 0) {
+    return undefined;
+  }
+
+  const client = new SecretsManagerClient({});
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SECRET_TIMEOUT_MS);
+  try {
+    const response = await client.send(new GetSecretValueCommand({ SecretId: trimmedId }), {
+      abortSignal: controller.signal,
+    });
+    return secretString(response);
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timer);
+    try {
+      client.destroy();
+    } catch {
+      // Closing the client is local cleanup.
+    }
+  }
+}
+
+function secretString(response: unknown): string | undefined {
+  if (typeof response !== 'object' || response === null) {
+    return undefined;
+  }
+  const value = (response as { SecretString?: unknown }).SecretString;
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+  return trimmed;
 }
 
 function readMessageContent(payload: unknown): string | undefined {

@@ -9,7 +9,7 @@ Read this before you present. The deck diagram uses the same node names and edge
 - Slack `platsec-demo` reaches AG Lead only when the message tags `@AG-lead`. That keyword filter is real. It is bot config on AG Lead's Slack routine, not code in this repo.
 - The three fix Lambdas on main are `ag-fix-close-open-port`, `ag-fix-restore-bucket-public-access-block`, and `ag-fix-remove-bucket-public-access-block`.
 - Yann, Slack id `U0CAKUDP3L0`, is the only approver. The README on PR #10 records that id. The fix handlers do not.
-- `docs/aws-setup.md` says the close-open-port role revokes only a group tagged `purpose=ag-demo-synthetic`. The policy also requires `auto-remediate=true`, and the handler refuses the dry run and the apply unless that tag is exactly `true`. The handler does not check `purpose`. Follow the handler.
+- `docs/aws-setup.md` says the close-open-port role revokes only a group tagged `purpose=ag-demo-synthetic`. The policy also requires `auto-remediate=true`, and the handler refuses the dry run and the apply unless that tag is exactly `true`. The handler does not check `purpose`. It calls `classifyIngress()` and does not revoke a rule whose verdict is `ok`. A sensitive port on a `public=true` group is still revoked. Follow the handler.
 
 ## Frame the business problem
 
@@ -29,9 +29,9 @@ An engineer, or a demo click, opens a door that the tags say should stay shut. C
 
 Pick one incident. Say which one you are showing. The two incidents use different Lambdas.
 
-Security group. Use a demo group already tagged `purpose=ag-demo-synthetic` and `auto-remediate=true`. The docs' synthetic id is `sg-demo0001`. Add one public ingress rule, tcp port 22 or tcp port 443, CIDR `0.0.0.0/0`. `docs/intake.md` matches a successful `AuthorizeSecurityGroupIngress` only. A failed call and a dry-run API call set `errorCode`, and those events are left out. The transformer sends the first permission and the first IPv4 range only. If `fromPort` and `toPort` differ, `close-open-port` does not apply and the case stays with a human.
+Security group. Use a demo group already tagged `purpose=ag-demo-synthetic` and `auto-remediate=true`. The docs' synthetic id is `sg-demo0001`. Add one public ingress rule, tcp port 22, CIDR `0.0.0.0/0`. Tcp port 443 from `0.0.0.0/0` is revoked only when the group is not tagged `public=true`. A `public=true` group keeps 443 and still loses 22. `docs/intake.md` matches a successful `AuthorizeSecurityGroupIngress` only. A failed call and a dry-run API call set `errorCode`, and those events are left out. The transformer sends the first permission and the first IPv4 range only. If `fromPort` and `toPort` differ, `close-open-port` does not apply and the case stays with a human.
 
-Bucket that should stay blocked. Use a bucket whose name starts with `ag-demo-`, tagged `purpose=ag-demo-synthetic` and `auto-remediate=true`, and not tagged `intended-public=true`. A name that matches the handler is `ag-demo-walkthrough`. Turn Block Public Access off. That is the incident. The Lambda that turns the four flags back on is `ag-fix-restore-bucket-public-access-block`. Leave the bucket `ag-demo-public-10281729` out of this incident. That bucket is the intended-public case below.
+Bucket that should stay blocked. Use a bucket whose name starts with `ag-demo-`, tagged `purpose=ag-demo-synthetic` and `auto-remediate=true`, and not tagged `public=true`. A name that matches the handler is `ag-demo-walkthrough`. Turn Block Public Access off. That is the incident. The Lambda that turns the four flags back on is `ag-fix-restore-bucket-public-access-block`. Leave the bucket `ag-demo-public-10281729` out of this incident. That bucket is the public case below.
 
 Then walk the same spine for either incident:
 
@@ -66,7 +66,7 @@ Expect `changed: false` and `reason` `dry_run` when the four flags are not all t
 6. A successful revoke has `changed: true` and `reason` `revoked`. A successful restore has `changed: true` and `reason` `restored`. Run it once more. The second run finds the desired state and returns `changed: false`.
 7. AG Lead writes the case in Notion `AG cases`. TODO (Yann): what closed looks like on that page.
 
-There is a third Lambda, and it is a different story. `ag-fix-remove-bucket-public-access-block` deletes Block Public Access only on the bucket `ag-demo-public-10281729`, and only when that bucket has all three tags `intended-public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic`. The intended state comes from the `intended-public=true` tag. The handler does not read case text. AWS authorizes `DeletePublicAccessBlock` with `s3:PutBucketPublicAccessBlock`, which is the action on the allow-list. A dry run omits `apply`. `reason` is `dry_run` when a block configuration is present, `already_absent` when it is not, and `removed` after a successful apply. Do not use this function to open an arbitrary bucket. `ag-fix-restore-bucket-public-access-block` refuses a bucket tagged `intended-public=true` with `IntendedPublicBucket`.
+There is a third Lambda, and it is a different story. `ag-fix-remove-bucket-public-access-block` deletes Block Public Access only on the bucket `ag-demo-public-10281729`, and only when that bucket has all three tags `public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic`. The intended state comes from the `public=true` tag. The handler does not read case text. AWS authorizes `DeletePublicAccessBlock` with `s3:PutBucketPublicAccessBlock`, which is the action on the allow-list. A dry run omits `apply`. `reason` is `dry_run` when a block configuration is present, `already_absent` when it is not, and `removed` after a successful apply. Do not use this function to open an arbitrary bucket. `ag-fix-restore-bucket-public-access-block` refuses a bucket tagged `public=true` with `PublicBucket`.
 
 If the bucket incident never arrives on its own, check the diagnose list. `ag-cloudtrail-s3-public-access-to-lead` is created outside Terraform (manual). Its event pattern is not written in this repository, and `docs/intake.md` does not describe it.
 
@@ -91,9 +91,9 @@ Use this when the demo stalls. Check them in order.
    - More than one matching ingress rule: `NotOneRule`.
    - Restore, purpose tag missing or wrong: `BucketNotTagged`, `bucket must be tagged purpose=ag-demo-synthetic`.
    - Restore, `auto-remediate` not exactly `true`: `MissingAutoRemediateTag`.
-   - Restore, `intended-public=true`: `IntendedPublicBucket`, `bucket tagged intended-public=true is left unchanged`.
+   - Restore, `public=true`: `PublicBucket`, `bucket tagged public=true is left unchanged`.
    - Restore, bad bucket name: `InvalidInput`. The name must be 9 to 63 characters, start with `ag-demo-`, and use only lowercase letters, digits, dots, and hyphens.
-   - Remove, any of the three tags missing or not exact: `MissingRequiredTags`, `bucket must have tags intended-public=true, auto-remediate=true, and purpose=ag-demo-synthetic`.
+   - Remove, any of the three tags missing or not exact: `MissingRequiredTags`, `bucket must have tags public=true, auto-remediate=true, and purpose=ag-demo-synthetic`.
    - Remove, any other bucket: `InvalidInput`, and the message names `ag-demo-public-10281729`.
 
 `ag-reader` handles read-only checks. It is created outside Terraform (manual). This repository does not say which bot assumes it. The fix Lambdas still do their own reads: `ec2:DescribeSecurityGroupRules` and `ec2:DescribeSecurityGroups` on the port fix, and `s3:GetBucketTagging` plus `s3:GetBucketPublicAccessBlock` on the bucket fixes.
@@ -118,7 +118,7 @@ The brief: who, why, owner, intended state. Identity is merged into Context.
 
 From the runbook: Context checks whether a change is reasonable to make now, who owns the resource, who is on call, and whether a freeze is active. Context uses structured records. Context does not call Grok and does not change AWS.
 
-TODO (Yann): where the owner record, the on-call record, and the freeze flag live. They are not in this repo. `inventory/services.json` is a synthetic package list for the advisory reader. It is not a cloud inventory of intended state.
+TODO (Yann): where the owner record, the on-call record, and the freeze flag live. They are not in this repo. `inventory/services.json` is a synthetic package list. It is not a cloud inventory of intended state.
 
 ### AG Change
 
@@ -130,17 +130,16 @@ From the runbook: Change checks whether an approved request covers this one find
 
 The brief: Builder writes the fix PR through a Cursor cloud agent.
 
-From the runbook: a new fix follows `.cursor/skills/writing-remediators/SKILL.md`. The advisory reader follows `.cursor/skills/writing-extractors/SKILL.md`. The guard test must pass. Builder does not merge.
+From the runbook: a new fix follows `.cursor/skills/writing-remediators/SKILL.md`. The guard test must pass. Builder does not merge.
 
 ### The repo, the rules, and the skills
 
-- `AGENTS.md` is the agent contract: one fix per pull request, dry run by default, Grok only through `extract()`, no merge unless Yann asks, no AWS from the agent.
-- `.cursor/rules/core.mdc` applies to every change: plain English, no em dashes, synthetic data, no secrets, and the same intended-state rule as the allow-list.
-- `.cursor/rules/fixes.mdc` is the shape of one fix.
-- `.cursor/rules/grok.mdc` is the Grok call rule.
+- `AGENTS.md` is the agent contract: one fix per pull request, dry run by default, agents never merge, Yann merges, no AWS from the agent.
+- `.cursor/rules/core.mdc` applies to every change: plain English, no em dashes, synthetic data, no secrets, and the same intended-state rule as the allow-list. The demo scope is public S3 buckets and open ports only.
+- `.cursor/rules/fixes.mdc` is the shape of one fix, including the world-open port rule. The port list is `src/policy/sensitive-ports.ts`.
+- `.cursor/rules/reports.mdc` is the report rule. All xAI calls go through `src/grok/client.ts`. A report Lambda is read-only. Grok writes a summary and does not trigger an action.
 - `.cursor/rules/protected.mdc` lists paths an agent must not edit. The matching check is `scripts/check-protected-paths.mjs`. Protected paths are `src/guard/`, `tests/guard*`, `infra/modules/`, `.github/`, `src/fixes/allow-list.ts`, and `.cursor/`. Yann adds the `guard-change` label. An agent does not.
 - `.cursor/skills/writing-remediators/SKILL.md` is the procedure for a new fix folder.
-- `.cursor/skills/writing-extractors/SKILL.md` is the procedure when free text has to be read.
 
 The allow-list on main has three keys:
 
@@ -148,7 +147,7 @@ The allow-list on main has three keys:
 | --- | --- | --- | --- |
 | `close-open-port` | `cloud:open_port` | `ec2:RevokeSecurityGroupIngress` | Revoke one ingress rule on one security group. Undo is a human authorize of that same rule. The fix does not perform the undo. |
 | `restore-bucket-public-access-block` | `cloud:s3_public_access_block_removed` | `s3:PutBucketPublicAccessBlock` | Turn on all four Block Public Access flags for one `ag-demo-*` bucket. |
-| `remove-bucket-public-access-block` | `cloud:s3_public_access_block_drift_intended_public` | `s3:PutBucketPublicAccessBlock` | Remove Block Public Access on the one bucket tagged `intended-public=true`. The handler calls `DeletePublicAccessBlockCommand`. |
+| `remove-bucket-public-access-block` | `cloud:s3_public_access_block_drift_public` | `s3:PutBucketPublicAccessBlock` | Remove Block Public Access on the one bucket tagged `public=true`. The handler calls `DeletePublicAccessBlockCommand`. |
 
 `src/fixes/registry.ts` builds `ag-fix-<name>` from that list. Terraform in `infra/main.tf` names the same three. Each role is `ag-fix-<name>` with permissions boundary `ag-fix-boundary`. The close-only list in `src/guard/mutating-apis.ts` is `ec2:RevokeSecurityGroupIngress` and `s3:PutBucketPublicAccessBlock`.
 
@@ -158,11 +157,7 @@ A Cursor cloud agent run is how Builder opens the pull request. TODO (Yann): the
 
 `extract()` in `src/grok/client.ts` is the only HTTP call to xAI. Temperature is 0. The wait is 15 seconds. The key is `XAI_API_KEY`. The model is `XAI_MODEL`, or `grok-4.7` when that variable is unset. A missing key returns `no_key` and does not call the network. Other failures are `timeout`, `http_error`, `bad_json`, and `schema_mismatch`. The client does not log the key, the prompt, or the reply.
 
-The only non-test caller is `readAdvisory()` in `src/extractors/advisory/read.ts`. `assessAdvisory()` in the same file calls `readAdvisory()`, then compares the verified ranges with the inventory in code. What Grok decides there: the package name, the vulnerable functions, the affected ranges, the fixed version, and the workaround, and only when `validate` passes. What code decides: whether each fact is supported by the prose and the trusted alert, and which inventory services sit inside the ranges. A miss is `invalid_facts`.
-
-No fix handler imports `extract()`. The three Lambdas do not call Grok. No workflow calls it. The CloudTrail webhook is structured, so that path does not call Grok. The Slack prose call, when the message is free text code cannot parse, is in the Grok Bot app, not in this repo.
-
-So the remediation path does not call the Grok API at runtime. The advisory functions will call it when some caller invokes them. In this repo those functions are invoked by tests, and the tests mock `fetch`.
+No fix handler imports `extract()`. The three Lambdas do not call Grok. No workflow calls it. The CloudTrail webhook is structured, so that path does not call Grok. The Slack prose call, when the message is free text code cannot parse, is in the Grok Bot app, not in this repo. Tests mock `fetch` and pass with no key.
 
 ## Walk trigger to output
 
@@ -182,10 +177,10 @@ Handoffs, in the order the runbook gives them:
 Human approvals, as the brief lists them, and what the repo actually enforces:
 
 - Build approval. The runbook says that without Yann's yes, the invoke stays a dry run and Builder does not start. TODO (Yann): whether "build approval" is that same yes or a separate click. The repo has no second flag for it.
-- Pull request review and merge. Builder does not merge. Yann merges only when he explicitly asks. That is the merge gate in `docs/architecture.md` and `AGENTS.md`.
+- Pull request review and merge. Agents never merge. Yann merges. That is the merge gate in `AGENTS.md` and `.cursor/rules/core.mdc`.
 - `guard-change` label. Required when the pull request touches a protected path. Only Yann adds it. This Pages change adds `.github/workflows/pages.yml`, so this pull request needs that label before the plan check can pass.
 - Run approval. `apply` defaults to false. Only a boolean `true` performs the one mutating call, and the bot sets that after Yann's yes.
-- Tags as standing consent. That phrase is the brief's. In the code, tags are the recorded intended state and the eligibility check. They are not a substitute for Yann's yes. `auto-remediate=true` is required before the close. `purpose=ag-demo-synthetic` marks the demo. `intended-public=true` is the only signal that may remove a block, and only on `ag-demo-public-10281729`. Case text cannot set it.
+- Tags as standing consent. That phrase is the brief's. In the code, tags are the recorded intended state and the eligibility check. They are not a substitute for Yann's yes. `auto-remediate=true` is required before the close. `purpose=ag-demo-synthetic` marks the demo. `public=true` is the only signal that may remove a block, and only on `ag-demo-public-10281729`. Case text cannot set it.
 
 ## Cursor cloud agents, skills, and rules
 
@@ -210,7 +205,7 @@ Shipped today:
 - The intake reads the first permission and the first IPv4 range. That can drop a delivery. CloudTrail still has the call.
 - Lambda log groups live 14 days (`infra/modules/fix/main.tf`). The API destination allows 1 request per second (`docs/intake.md`).
 - One region in the workflows and the architecture doc: `ap-southeast-1`. The sample webhook body uses synthetic account `111122223333`. The live account id stays in `docs/intake.md` and is not repeated here.
-- The only open-access fix is the intended-public bucket, and only from the tag.
+- The only open-access fix is the public bucket, and only from the tag.
 
 Before an enterprise rollout, the brief says these change. None of them are built. TODO (Yann) on each choice:
 
@@ -219,7 +214,7 @@ Before an enterprise rollout, the brief says these change. None of them are buil
 - Secrets management. The webhook key stays in the EventBridge connection. `XAI_API_KEY` is an environment variable. TODO (Yann): the store you want instead.
 - Audit log retention. The Lambda log groups are 14 days. TODO (Yann): the retention you want for those logs and for the bot transcripts.
 - Rate limits. The documented limit is 1 API destination request per second, with 3 retries in 1 hour. TODO (Yann): any other limit.
-- An inventory of intended state, in place of tags. Today the intended-public tag is that record for one bucket, and `purpose` plus `auto-remediate` scope the demo. `inventory/services.json` is packages and versions, not buckets and security groups.
+- An inventory of intended state, in place of tags. Today the public tag is that record for one bucket, and `purpose` plus `auto-remediate` scope the demo. `inventory/services.json` is packages and versions, not buckets and security groups.
 
 ## Handling questions that need live changes to the bots
 
@@ -231,8 +226,8 @@ Profile. The approver in the brief is Yann, `U0CAKUDP3L0`. The channel in the re
 
 Skills. Two different things share the word.
 
-- A skill file in this repo (`.cursor/skills/writing-remediators/SKILL.md` or `writing-extractors/SKILL.md`) changes by pull request. `.cursor/` is protected, so Yann adds the `guard-change` label before that check can pass. An example: "If we want every new fix to require a second tag, that is an edit to the remediator skill and to the guard. The guard is a protected path. It is a pull request, not a live toggle."
-- A skill attached to a bot in the Grok Bot app is the live list. TODO (Yann): how that list is edited. An example of the request, not the clicks: "Detach the extractor skill from AG Change if Change must never read free text." The runbook already says Change does not call Grok.
+- A skill file in this repo (`.cursor/skills/writing-remediators/SKILL.md`) changes by pull request. `.cursor/` is protected, so Yann adds the `guard-change` label before that check can pass. An example: "If we want every new fix to require a second tag, that is an edit to the remediator skill and to the guard. The guard is a protected path. It is a pull request, not a live toggle."
+- A skill attached to a bot in the Grok Bot app is the live list. TODO (Yann): how that list is edited. An example of the request, not the clicks: "Detach a free-text skill from AG Change if Change must never read free text." The runbook already says Change does not call Grok.
 
 Routines. AG Lead has a CloudTrail webhook routine and a Slack routine whose keyword filter is `@AG-lead`. That filter is bot config. The webhook endpoint was created by hand. It is not Terraform. The URL is not in the repo. An example: "Pointing the webhook at a new routine means updating the EventBridge API destination `ag-lead-webhook`, which `docs/intake.md` says was created with the AWS CLI, and updating the routine on AG Lead. I do not have the URL in this repo." Another example: "Changing which Slack tag reaches Lead means editing that keyword on the Slack routine. `ag-cloudtrail-s3-public-access-to-lead` is created outside Terraform (manual). A bot profile edit does not create that rule."
 

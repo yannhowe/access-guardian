@@ -7,7 +7,9 @@ alwaysApply: true
 
 Write plain English. Do not use em dashes.
 
-Do not commit secrets, account ids, or URLs. Synthetic data only. A fix returns a resource to its recorded intended state. The only case where that opens access: a fix may remove Block Public Access on an S3 bucket that carries all three tags intended-public=true, auto-remediate=true, and purpose=ag-demo-synthetic (exact key and value, case-sensitive). The intended state comes only from the intended-public=true tag, never from case or finding text.
+Do not commit secrets, account ids, or URLs. Synthetic data only. A fix returns a resource to its recorded intended state. A fix may open access only when that return is proven both by the public=true tag check in the handler and by the IAM tag condition on the fix role. The only case is removing Block Public Access on an S3 bucket that carries all three tags public=true, auto-remediate=true, and purpose=ag-demo-synthetic (exact key and value, case-sensitive). The intended state comes only from the public=true tag, never from case or finding text. Every other fix stays close-only.
+
+The demo scope is public S3 buckets and open ports only.
 
 Every pull request pastes the output of `npm test`, `npx tsc --noEmit`, `terraform -chdir=infra fmt -check -recursive`, and `terraform -chdir=infra validate`.
 

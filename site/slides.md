@@ -16,7 +16,7 @@ This repo is the gate in front of a change:
 
 - An allow-list of fixes.
 - One Lambda per fix, one hardcoded action.
-- A guard that fails a fix off the list, a policy that opens outside the one intended-public case, a wildcard, or an xAI call outside the Grok client.
+- A guard that fails a fix off the list, a policy that opens outside the one public case, a wildcard, or an xAI call outside the Grok client.
 - Yann's yes before a real AWS call.
 - Yann's merge before code lands.
 
@@ -28,7 +28,7 @@ Dry run is the default. The Lambda changes AWS only when the event has `apply` s
 
 Region `ap-southeast-1`. The CloudTrail intake is a hand-built EventBridge rule in `docs/intake.md`. That path has no Lambda.
 
-A fix runs only on a tagged demo resource. `auto-remediate=true` is required. `purpose=ag-demo-synthetic` marks the demo. `intended-public=true` is the only recorded intended state that may remove a block, and only on one bucket. Case text does not set that state.
+A fix runs only on a tagged demo resource. `auto-remediate=true` is required. `purpose=ag-demo-synthetic` marks the demo. `public=true` is the only recorded intended state that may remove a block, and only on one bucket. Case text does not set that state.
 
 Grok does not authorize anyone. `extract()` returns schema-valid JSON or a typed failure. Code decides what happens next.
 
@@ -82,7 +82,7 @@ flowchart TD
     guardAudit["src/guard audit"]
     tagAuto["auto-remediate true"]
     tagPurpose["purpose<br/>ag-demo-synthetic"]
-    tagPublic["intended-public true"]
+    tagPublic["public true"]
     guardLabel["guard-change label"]
   end
 

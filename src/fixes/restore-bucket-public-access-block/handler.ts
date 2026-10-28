@@ -11,11 +11,11 @@
  *
  * apply defaults to false. Only a boolean true writes. This file does not
  * call Grok. It does not remove the block, it does not change a bucket
- * tagged intended-public=true, and it does not change account settings.
+ * tagged public=true, and it does not change account settings.
  *
  * What Grok decides: nothing.
  * What code decides: whether the bucket name is valid, whether the bucket
- * is tagged intended-public=true (those buckets are left unchanged), whether
+ * is tagged public=true (those buckets are left unchanged), whether
  * the bucket is tagged purpose=ag-demo-synthetic, whether the bucket has tag
  * auto-remediate set to true, whether all four Block Public Access flags
  * are already true, and whether the one put is sent.
@@ -44,8 +44,8 @@ const MISSING_TAGS = 'NoSuchTagSet';
 const MISSING_BLOCK = 'NoSuchPublicAccessBlockConfiguration';
 const AUTO_REMEDIATE_TAG_KEY = 'auto-remediate';
 const AUTO_REMEDIATE_TAG_VALUE = 'true';
-const INTENDED_PUBLIC_TAG_KEY = 'intended-public';
-const INTENDED_PUBLIC_TAG_VALUE = 'true';
+const PUBLIC_TAG_KEY = 'public';
+const PUBLIC_TAG_VALUE = 'true';
 
 function hasAutoRemediateTag(tags: readonly { Key?: unknown; Value?: unknown }[]): boolean {
   for (const tag of tags) {
@@ -56,9 +56,9 @@ function hasAutoRemediateTag(tags: readonly { Key?: unknown; Value?: unknown }[]
   return false;
 }
 
-function hasIntendedPublicTag(tags: readonly { Key?: unknown; Value?: unknown }[]): boolean {
+function hasPublicTag(tags: readonly { Key?: unknown; Value?: unknown }[]): boolean {
   for (const tag of tags) {
-    if (tag.Key === INTENDED_PUBLIC_TAG_KEY && tag.Value === INTENDED_PUBLIC_TAG_VALUE) {
+    if (tag.Key === PUBLIC_TAG_KEY && tag.Value === PUBLIC_TAG_VALUE) {
       return true;
     }
   }
@@ -112,7 +112,7 @@ export async function handler(event: unknown): Promise<FixResult> {
 }
 
 /**
- * Validate the event, skip a bucket tagged intended-public=true, require
+ * Validate the event, skip a bucket tagged public=true, require
  * the demo tag and the auto-remediate tag, and put the four true flags
  * only when apply is true and the bucket is not already blocked.
  */
@@ -130,12 +130,12 @@ export async function handleRestoreBucketPublicAccessBlock(
   if (!tagged.ok) {
     return tagged.failure;
   }
-  if (hasIntendedPublicTag(tagged.tags)) {
+  if (hasPublicTag(tagged.tags)) {
     return {
       ok: false,
       changed: false,
-      errorCode: 'IntendedPublicBucket',
-      errorMessage: 'bucket tagged intended-public=true is left unchanged',
+      errorCode: 'PublicBucket',
+      errorMessage: 'bucket tagged public=true is left unchanged',
     };
   }
   const purpose = readPurposeValue(tagged.tags);
