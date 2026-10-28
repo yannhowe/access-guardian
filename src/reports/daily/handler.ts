@@ -9,10 +9,12 @@
  * What code decides: the window, which events are writes, which callers are
  * noise, how events are grouped and capped, whether the model JSON matches
  * the schema, which suspected open ports classifyIngress still calls a
- * finding (classifyIngress applies public=true), which eventIds were in the
- * model input, the principal and resource names on each row, and whether the
+ * finding (classifyIngress applies public=true), how a
+ * ModifySecurityGroupRules edit is read, which eventIds were in the model
+ * input, the principal and resource names on each row, and whether the
  * report is posted. This handler passes XAI_SECRET_ID into extract().
- * extract() reads the key.
+ * extract() reads the key. A malformed rule edit is unparseable and is not
+ * treated as ok.
  *
  * extract() sends temperature 0. On timeout, schema mismatch, or any other
  * model error, nothing from the model is posted. Event fields are data.
@@ -55,6 +57,7 @@ const SLACK_CHAT_POST_MESSAGE = 'https://slack.com/api/chat.postMessage';
 
 const INPUT_KEYS = new Set(['hours', 'dryRun']);
 const FINDING_KEYS = new Set(['cloud:public_bucket', 'cloud:open_port']);
+const MODIFY_SECURITY_GROUP_RULES = 'ModifySecurityGroupRules';
 
 const SYSTEM_PROMPT = [
   'You write a daily report of CloudTrail write events.',
@@ -629,6 +632,12 @@ function resourceOf(
       return clip(params.groupId, 180);
     }
   }
+  if (eventName === MODIFY_SECURITY_GROUP_RULES) {
+    const parsed = parseModifySecurityGroupRules(params);
+    if (parsed.groupId !== undefined) {
+      return clip(parsed.groupId, 180);
+    }
+  }
   const bucket = params.bucketName ?? params.bucket;
   if (typeof bucket === 'string' && bucket.length > 0) {
     return clip(bucket, 180);
@@ -647,6 +656,13 @@ function detailOf(eventName: string, params: Record<string, unknown>): string {
       return 'ingress unparsed';
     }
     return clip(`ingress ${rules.map(formatRule).join('; ')}`, DETAIL_CAP);
+  }
+  if (eventName === MODIFY_SECURITY_GROUP_RULES) {
+    const parsed = parseModifySecurityGroupRules(params);
+    if (parsed.status !== 'rules') {
+      return 'ingress unparsed';
+    }
+    return clip(`ingress ${parsed.rules.map(formatEditedRule).join('; ')}`, DETAIL_CAP);
   }
   if (eventName === 'PutBucketPolicy' || eventName === 'PutBucketAcl') {
     return clip(`bucketPolicy ${policySummary(params.bucketPolicy ?? params.policy)}`, DETAIL_CAP);
@@ -856,22 +872,228 @@ function checkFinding(
 }
 
 /**
- * Re-check a suspected open port by calling classifyIngress with the request
- * parameters from the event. Tags on those parameters are passed through.
- * A world-open sensitive port stays a finding, including when the group is
- * tagged public=true. Any other world-open port is a finding unless that tag
- * is present with the exact key and value.
+ * Re-check a suspected open port with classifyIngress. Tags on the request
+ * parameters are passed through. AuthorizeSecurityGroupIngress is read from
+ * ipPermissions. ModifySecurityGroupRules is read from
+ * ModifySecurityGroupRulesRequest, and each edited rule is judged the same
+ * way as a new rule. A missing or malformed edit is not ok, so a suspected
+ * finding on that event stays. A world-open sensitive port stays a finding,
+ * including when the group is tagged public=true. Any other world-open port
+ * is a finding unless that tag is present with the exact key and value.
  */
 function openPortIsFinding(event: KeptEvent | undefined): boolean {
   if (event === undefined) {
     return false;
   }
+  const tags = tagsFrom(event.requestParameters);
+  if (event.eventName === MODIFY_SECURITY_GROUP_RULES) {
+    return judgeModifySecurityGroupRules(event.requestParameters, tags) !== 'ok';
+  }
   const rules = ingressRulesFrom(event.requestParameters);
   if (rules.length === 0) {
     return false;
   }
-  const tags = tagsFrom(event.requestParameters);
   return rules.some((rule) => classifyIngress(rule, tags) === 'finding');
+}
+
+/** Structured CloudTrail tokens. Free text, including spaces, does not match. */
+const STRUCTURED_TOKEN = /^[A-Za-z0-9.:_/+-]{1,128}$/;
+
+export type ModifyIngressVerdict = 'finding' | 'ok' | 'unparseable';
+
+type EditedRule = {
+  rule: IngressRule;
+  referencedGroupId?: string;
+};
+
+type ParsedModify =
+  | { status: 'rules'; groupId: string; rules: EditedRule[] }
+  | { status: 'unparseable'; groupId: string | undefined };
+
+/**
+ * Judge one ModifySecurityGroupRules request. The shape is
+ * ModifySecurityGroupRulesRequest with GroupId and SecurityGroupRule
+ * items. Each item carries SecurityGroupRuleId and SecurityGroupRule
+ * (IpProtocol, FromPort, ToPort, and one of CidrIpv4, CidrIpv6, or
+ * ReferencedGroupId). A CIDR rule is passed to classifyIngress. A
+ * ReferencedGroupId source has no CIDR, so classifyIngress sees an
+ * empty source list. A missing or malformed field is unparseable.
+ * Description and any other free text are ignored.
+ */
+export function judgeModifySecurityGroupRules(
+  params: unknown,
+  tags: readonly SecurityGroupTag[],
+): ModifyIngressVerdict {
+  const parsed = parseModifySecurityGroupRules(params);
+  if (parsed.status !== 'rules') {
+    return 'unparseable';
+  }
+  const finding = parsed.rules.some((item) => classifyIngress(item.rule, tags) === 'finding');
+  return finding ? 'finding' : 'ok';
+}
+
+function parseModifySecurityGroupRules(params: unknown): ParsedModify {
+  if (!isRecord(params)) {
+    return { status: 'unparseable', groupId: undefined };
+  }
+  const request = params.ModifySecurityGroupRulesRequest;
+  if (!isRecord(request)) {
+    return { status: 'unparseable', groupId: undefined };
+  }
+  const groupId = structuredToken(request.GroupId);
+  if (groupId === undefined) {
+    return { status: 'unparseable', groupId: undefined };
+  }
+  const items = modifyRuleItems(request.SecurityGroupRule);
+  if (items === undefined) {
+    return { status: 'unparseable', groupId };
+  }
+  const rules: EditedRule[] = [];
+  for (const item of items) {
+    const rule = readEditedRule(item);
+    if (rule === undefined) {
+      return { status: 'unparseable', groupId };
+    }
+    rules.push(rule);
+  }
+  return { status: 'rules', groupId, rules };
+}
+
+function modifyRuleItems(value: unknown): unknown[] | undefined {
+  if (Array.isArray(value)) {
+    return value.length > 0 ? value : undefined;
+  }
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  if (Array.isArray(value.items)) {
+    return value.items.length > 0 ? value.items : undefined;
+  }
+  if (isRecord(value.SecurityGroupRule) || typeof value.SecurityGroupRuleId === 'string') {
+    return [value];
+  }
+  return undefined;
+}
+
+function readEditedRule(item: unknown): EditedRule | undefined {
+  if (!isRecord(item)) {
+    return undefined;
+  }
+  if (structuredToken(item.SecurityGroupRuleId) === undefined) {
+    return undefined;
+  }
+  const body = item.SecurityGroupRule;
+  if (!isRecord(body)) {
+    return undefined;
+  }
+  const protocol = structuredToken(body.IpProtocol);
+  if (protocol === undefined) {
+    return undefined;
+  }
+  const ports = readEditedPorts(protocol, body);
+  if (ports === undefined) {
+    return undefined;
+  }
+  const source = readEditedSource(body);
+  if (source === undefined) {
+    return undefined;
+  }
+  return {
+    referencedGroupId: source.referencedGroupId,
+    rule: {
+      protocol,
+      fromPort: ports.fromPort,
+      toPort: ports.toPort,
+      ipv4Cidrs: source.ipv4,
+      ipv6Cidrs: source.ipv6,
+    },
+  };
+}
+
+function readEditedPorts(
+  protocol: string,
+  body: Record<string, unknown>,
+): { fromPort: number | null; toPort: number | null } | undefined {
+  const fromPort = readOptionalPort(body, 'FromPort');
+  const toPort = readOptionalPort(body, 'ToPort');
+  if (fromPort === 'bad' || toPort === 'bad') {
+    return undefined;
+  }
+  if (protocol === '-1') {
+    if (fromPort === 'absent' && toPort === 'absent') {
+      return { fromPort: null, toPort: null };
+    }
+    if (fromPort === 'absent' || toPort === 'absent' || fromPort > toPort) {
+      return undefined;
+    }
+    return { fromPort, toPort };
+  }
+  if (fromPort === 'absent' || toPort === 'absent' || fromPort > toPort) {
+    return undefined;
+  }
+  return { fromPort, toPort };
+}
+
+function readOptionalPort(body: Record<string, unknown>, key: 'FromPort' | 'ToPort'): number | 'absent' | 'bad' {
+  if (!Object.prototype.hasOwnProperty.call(body, key) || body[key] === undefined || body[key] === null) {
+    return 'absent';
+  }
+  const value = body[key];
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 65535) {
+    return 'bad';
+  }
+  return value;
+}
+
+function readEditedSource(
+  body: Record<string, unknown>,
+): { ipv4: string[]; ipv6: string[]; referencedGroupId?: string } | undefined {
+  if (readOptionalToken(body, 'PrefixListId') !== 'absent') {
+    return undefined;
+  }
+  const ipv4 = readOptionalToken(body, 'CidrIpv4');
+  const ipv6 = readOptionalToken(body, 'CidrIpv6');
+  const referenced = readOptionalToken(body, 'ReferencedGroupId');
+  if (ipv4 === 'bad' || ipv6 === 'bad' || referenced === 'bad') {
+    return undefined;
+  }
+  const chosen = [ipv4, ipv6, referenced].filter((item) => item !== 'absent');
+  if (chosen.length !== 1) {
+    return undefined;
+  }
+  if (ipv4 !== 'absent') {
+    return { ipv4: [ipv4], ipv6: [] };
+  }
+  if (ipv6 !== 'absent') {
+    return { ipv4: [], ipv6: [ipv6] };
+  }
+  if (referenced !== 'absent') {
+    return { ipv4: [], ipv6: [], referencedGroupId: referenced };
+  }
+  return undefined;
+}
+
+function readOptionalToken(body: Record<string, unknown>, key: string): string | 'absent' | 'bad' {
+  if (!Object.prototype.hasOwnProperty.call(body, key) || body[key] === undefined || body[key] === null) {
+    return 'absent';
+  }
+  const token = structuredToken(body[key]);
+  return token === undefined ? 'bad' : token;
+}
+
+function structuredToken(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !STRUCTURED_TOKEN.test(value)) {
+    return undefined;
+  }
+  return value;
+}
+
+function formatEditedRule(item: EditedRule): string {
+  const base = formatRule(item.rule);
+  if (item.referencedGroupId === undefined) {
+    return base;
+  }
+  return `${base} referencedGroup=${item.referencedGroupId}`;
 }
 
 function ingressRulesFrom(params: Record<string, unknown>): IngressRule[] {
