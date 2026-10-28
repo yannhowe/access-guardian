@@ -1,0 +1,7 @@
+{
+  "name": "close-open-port",
+  "findingKey": "cloud:open_port",
+  "action": "ec2:RevokeSecurityGroupIngress",
+  "description": "Revoke one ingress rule on one security group",
+  "callsGrok": false
+}
