@@ -23,7 +23,7 @@ export const ALLOWED_FIXES = {
     findingKey: 'cloud:s3_public_access_block_removed',
     action: 's3:PutBucketPublicAccessBlock',
     summary: 'Turn on all four Block Public Access flags for one bucket',
-    undo: 'Turn those four Block Public Access flags off again for that bucket',
+    undo: 'There is no undo',
   },
 } as const satisfies Record<
   string,

@@ -113,7 +113,7 @@ describe('restore-bucket-public-access-block handler', () => {
       findingKey: 'cloud:s3_public_access_block_removed',
       action: ACTION,
       summary: 'Turn on all four Block Public Access flags for one bucket',
-      undo: 'Turn those four Block Public Access flags off again for that bucket',
+      undo: 'There is no undo',
     });
     expect(registryKeysMatchAllowList).toBe(true);
     expect(typeof handler).toBe('function');
