@@ -29,6 +29,8 @@ What Grok decides: those three fields, or a failure from `extract()`.
 
 What code decides: whether each function name is a case-sensitive substring of `advisoryProse`, and whether `affectedRange` and `fixedVersion` equal the trusted alert. A miss is `invalid_facts`. Do not drop the bad name and keep the rest. Do not invent a version the alert does not have. An empty function list is a result the caller can see. It is not a guess.
 
+The reader's output will be compared against `inventory/services.json`.
+
 If the prose contains `ignore previous`, `ignore all`, `system prompt`, `you are now`, or `approve this`, keep a suspicion note for the human and still apply the hard checks. The phrase does not change a field and it does not skip a check.
 
 Call `extract()` in `src/grok/client.ts`. Do not call `api.x.ai` from this folder. The file that calls `extract()` must say what Grok decides and what code decides. Tests mock the network. `tests/extractors/advisory-slot.test.ts` currently expects no TypeScript in this folder. When you add the module, replace that assertion with tests of the reader.
