@@ -19,3 +19,10 @@ module "fix" {
   policy_json              = file("${path.module}/../src/fixes/${each.value}/policy.json")
   permissions_boundary_arn = var.permissions_boundary_arn
 }
+
+# One-off access grants. Terraform reads only this directory, so this module
+# is what the apply workflow (terraform -chdir=infra) applies. State stays in
+# the root S3 backend from -backend-config.
+module "access_grants" {
+  source = "./access-grants"
+}
