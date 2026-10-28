@@ -9,7 +9,7 @@ Read this before you present. The deck diagram uses the same node names and edge
 - Slack `platsec-demo` reaches AG Lead only when the message tags `@AG-lead`. That keyword filter is real. It is bot config on AG Lead's Slack routine, not code in this repo.
 - The three fix Lambdas on main are `ag-fix-close-open-port`, `ag-fix-restore-bucket-public-access-block`, and `ag-fix-remove-bucket-public-access-block`.
 - Yann, Slack id `U0CAKUDP3L0`, is the only approver. The README on PR #10 records that id. The fix handlers do not.
-- `docs/aws-setup.md` says the close-open-port role revokes only a group tagged `purpose=ag-demo-synthetic`. The policy also requires `auto-remediate=true`, and the handler refuses the dry run and the apply unless that tag is exactly `true`. The handler does not check `purpose`. Follow the handler.
+- `docs/aws-setup.md` says the close-open-port role revokes only a group tagged `purpose=ag-demo-synthetic`. The policy also requires `auto-remediate=true`, and the handler refuses the dry run and the apply unless that tag is exactly `true`. The handler does not check `purpose`. It calls `classifyIngress()` and does not revoke a rule whose verdict is `ok`. A sensitive port on a `public=true` group is still revoked. Follow the handler.
 
 ## Frame the business problem
 
@@ -29,9 +29,9 @@ An engineer, or a demo click, opens a door that the tags say should stay shut. C
 
 Pick one incident. Say which one you are showing. The two incidents use different Lambdas.
 
-Security group. Use a demo group already tagged `purpose=ag-demo-synthetic` and `auto-remediate=true`. The docs' synthetic id is `sg-demo0001`. Add one public ingress rule, tcp port 22 or tcp port 443, CIDR `0.0.0.0/0`. `docs/intake.md` matches a successful `AuthorizeSecurityGroupIngress` only. A failed call and a dry-run API call set `errorCode`, and those events are left out. The transformer sends the first permission and the first IPv4 range only. If `fromPort` and `toPort` differ, `close-open-port` does not apply and the case stays with a human.
+Security group. Use a demo group already tagged `purpose=ag-demo-synthetic` and `auto-remediate=true`. The docs' synthetic id is `sg-demo0001`. Add one public ingress rule, tcp port 22, CIDR `0.0.0.0/0`. Tcp port 443 from `0.0.0.0/0` is revoked only when the group is not tagged `public=true`. A `public=true` group keeps 443 and still loses 22. `docs/intake.md` matches a successful `AuthorizeSecurityGroupIngress` only. A failed call and a dry-run API call set `errorCode`, and those events are left out. The transformer sends the first permission and the first IPv4 range only. If `fromPort` and `toPort` differ, `close-open-port` does not apply and the case stays with a human.
 
-Bucket that should stay blocked. Use a bucket whose name starts with `ag-demo-`, tagged `purpose=ag-demo-synthetic` and `auto-remediate=true`, and not tagged `intended-public=true`. A name that matches the handler is `ag-demo-walkthrough`. Turn Block Public Access off. That is the incident. The Lambda that turns the four flags back on is `ag-fix-restore-bucket-public-access-block`. Leave the bucket `ag-demo-public-10281729` out of this incident. That bucket is the intended-public case below.
+Bucket that should stay blocked. Use a bucket whose name starts with `ag-demo-`, tagged `purpose=ag-demo-synthetic` and `auto-remediate=true`, and not tagged `public=true`. A name that matches the handler is `ag-demo-walkthrough`. Turn Block Public Access off. That is the incident. The Lambda that turns the four flags back on is `ag-fix-restore-bucket-public-access-block`. Leave the bucket `ag-demo-public-10281729` out of this incident. That bucket is the public case below.
 
 Then walk the same spine for either incident:
 
@@ -66,7 +66,7 @@ Expect `changed: false` and `reason` `dry_run` when the four flags are not all t
 6. A successful revoke has `changed: true` and `reason` `revoked`. A successful restore has `changed: true` and `reason` `restored`. Run it once more. The second run finds the desired state and returns `changed: false`.
 7. AG Lead writes the case in Notion `AG cases`. TODO (Yann): what closed looks like on that page.
 
-There is a third Lambda, and it is a different story. `ag-fix-remove-bucket-public-access-block` deletes Block Public Access only on the bucket `ag-demo-public-10281729`, and only when that bucket has all three tags `intended-public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic`. The intended state comes from the `intended-public=true` tag. The handler does not read case text. AWS authorizes `DeletePublicAccessBlock` with `s3:PutBucketPublicAccessBlock`, which is the action on the allow-list. A dry run omits `apply`. `reason` is `dry_run` when a block configuration is present, `already_absent` when it is not, and `removed` after a successful apply. Do not use this function to open an arbitrary bucket. `ag-fix-restore-bucket-public-access-block` refuses a bucket tagged `intended-public=true` with `IntendedPublicBucket`.
+There is a third Lambda, and it is a different story. `ag-fix-remove-bucket-public-access-block` deletes Block Public Access only on the bucket `ag-demo-public-10281729`, and only when that bucket has all three tags `public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic`. The intended state comes from the `public=true` tag. The handler does not read case text. AWS authorizes `DeletePublicAccessBlock` with `s3:PutBucketPublicAccessBlock`, which is the action on the allow-list. A dry run omits `apply`. `reason` is `dry_run` when a block configuration is present, `already_absent` when it is not, and `removed` after a successful apply. Do not use this function to open an arbitrary bucket. `ag-fix-restore-bucket-public-access-block` refuses a bucket tagged `public=true` with `PublicBucket`.
 
 If the bucket incident never arrives on its own, check the diagnose list. `ag-cloudtrail-s3-public-access-to-lead` is created outside Terraform (manual). Its event pattern is not written in this repository, and `docs/intake.md` does not describe it.
 
@@ -91,9 +91,9 @@ Use this when the demo stalls. Check them in order.
    - More than one matching ingress rule: `NotOneRule`.
    - Restore, purpose tag missing or wrong: `BucketNotTagged`, `bucket must be tagged purpose=ag-demo-synthetic`.
    - Restore, `auto-remediate` not exactly `true`: `MissingAutoRemediateTag`.
-   - Restore, `intended-public=true`: `IntendedPublicBucket`, `bucket tagged intended-public=true is left unchanged`.
+   - Restore, `public=true`: `PublicBucket`, `bucket tagged public=true is left unchanged`.
    - Restore, bad bucket name: `InvalidInput`. The name must be 9 to 63 characters, start with `ag-demo-`, and use only lowercase letters, digits, dots, and hyphens.
-   - Remove, any of the three tags missing or not exact: `MissingRequiredTags`, `bucket must have tags intended-public=true, auto-remediate=true, and purpose=ag-demo-synthetic`.
+   - Remove, any of the three tags missing or not exact: `MissingRequiredTags`, `bucket must have tags public=true, auto-remediate=true, and purpose=ag-demo-synthetic`.
    - Remove, any other bucket: `InvalidInput`, and the message names `ag-demo-public-10281729`.
 
 `ag-reader` handles read-only checks. It is created outside Terraform (manual). This repository does not say which bot assumes it. The fix Lambdas still do their own reads: `ec2:DescribeSecurityGroupRules` and `ec2:DescribeSecurityGroups` on the port fix, and `s3:GetBucketTagging` plus `s3:GetBucketPublicAccessBlock` on the bucket fixes.
@@ -147,7 +147,7 @@ The allow-list on main has three keys:
 | --- | --- | --- | --- |
 | `close-open-port` | `cloud:open_port` | `ec2:RevokeSecurityGroupIngress` | Revoke one ingress rule on one security group. Undo is a human authorize of that same rule. The fix does not perform the undo. |
 | `restore-bucket-public-access-block` | `cloud:s3_public_access_block_removed` | `s3:PutBucketPublicAccessBlock` | Turn on all four Block Public Access flags for one `ag-demo-*` bucket. |
-| `remove-bucket-public-access-block` | `cloud:s3_public_access_block_drift_intended_public` | `s3:PutBucketPublicAccessBlock` | Remove Block Public Access on the one bucket tagged `intended-public=true`. The handler calls `DeletePublicAccessBlockCommand`. |
+| `remove-bucket-public-access-block` | `cloud:s3_public_access_block_drift_public` | `s3:PutBucketPublicAccessBlock` | Remove Block Public Access on the one bucket tagged `public=true`. The handler calls `DeletePublicAccessBlockCommand`. |
 
 `src/fixes/registry.ts` builds `ag-fix-<name>` from that list. Terraform in `infra/main.tf` names the same three. Each role is `ag-fix-<name>` with permissions boundary `ag-fix-boundary`. The close-only list in `src/guard/mutating-apis.ts` is `ec2:RevokeSecurityGroupIngress` and `s3:PutBucketPublicAccessBlock`.
 
@@ -180,7 +180,7 @@ Human approvals, as the brief lists them, and what the repo actually enforces:
 - Pull request review and merge. Agents never merge. Yann merges. That is the merge gate in `AGENTS.md` and `.cursor/rules/core.mdc`.
 - `guard-change` label. Required when the pull request touches a protected path. Only Yann adds it. This Pages change adds `.github/workflows/pages.yml`, so this pull request needs that label before the plan check can pass.
 - Run approval. `apply` defaults to false. Only a boolean `true` performs the one mutating call, and the bot sets that after Yann's yes.
-- Tags as standing consent. That phrase is the brief's. In the code, tags are the recorded intended state and the eligibility check. They are not a substitute for Yann's yes. `auto-remediate=true` is required before the close. `purpose=ag-demo-synthetic` marks the demo. `intended-public=true` is the only signal that may remove a block, and only on `ag-demo-public-10281729`. Case text cannot set it.
+- Tags as standing consent. That phrase is the brief's. In the code, tags are the recorded intended state and the eligibility check. They are not a substitute for Yann's yes. `auto-remediate=true` is required before the close. `purpose=ag-demo-synthetic` marks the demo. `public=true` is the only signal that may remove a block, and only on `ag-demo-public-10281729`. Case text cannot set it.
 
 ## Cursor cloud agents, skills, and rules
 
@@ -205,7 +205,7 @@ Shipped today:
 - The intake reads the first permission and the first IPv4 range. That can drop a delivery. CloudTrail still has the call.
 - Lambda log groups live 14 days (`infra/modules/fix/main.tf`). The API destination allows 1 request per second (`docs/intake.md`).
 - One region in the workflows and the architecture doc: `ap-southeast-1`. The sample webhook body uses synthetic account `111122223333`. The live account id stays in `docs/intake.md` and is not repeated here.
-- The only open-access fix is the intended-public bucket, and only from the tag.
+- The only open-access fix is the public bucket, and only from the tag.
 
 Before an enterprise rollout, the brief says these change. None of them are built. TODO (Yann) on each choice:
 
@@ -214,7 +214,7 @@ Before an enterprise rollout, the brief says these change. None of them are buil
 - Secrets management. The webhook key stays in the EventBridge connection. `XAI_API_KEY` is an environment variable. TODO (Yann): the store you want instead.
 - Audit log retention. The Lambda log groups are 14 days. TODO (Yann): the retention you want for those logs and for the bot transcripts.
 - Rate limits. The documented limit is 1 API destination request per second, with 3 retries in 1 hour. TODO (Yann): any other limit.
-- An inventory of intended state, in place of tags. Today the intended-public tag is that record for one bucket, and `purpose` plus `auto-remediate` scope the demo. `inventory/services.json` is packages and versions, not buckets and security groups.
+- An inventory of intended state, in place of tags. Today the public tag is that record for one bucket, and `purpose` plus `auto-remediate` scope the demo. `inventory/services.json` is packages and versions, not buckets and security groups.
 
 ## Handling questions that need live changes to the bots
 
