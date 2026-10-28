@@ -42,31 +42,78 @@ TODO (Yann): who feels this, what it costs today, and who buys the fix. Those fa
 
 ```mermaid
 flowchart TD
-  ct[CloudTrail]
-  sg[SG rule]
-  s3[S3 rule, brief]
-  api[API destination]
-  slack[Slack channel]
-  lead[AG Lead]
-  ctx[AG Context]
-  chg[AG Change]
-  dry[Dry run]
-  bld[AG Builder]
-  yann[Yann]
-  run[Apply true]
-  pr[Pull request]
-  main[Merge to main]
-  tf[terraform apply]
+  subgraph intakeBox [Intake]
+    cloudtrail[CloudTrail]
+    sgRule["ag-cloudtrail-<br/>sg-ingress-to-lead"]
+    s3Rule["ag-cloudtrail-<br/>s3-public-access-<br/>to-lead"]
+    apiDest["API destination<br/>ag-lead-webhook"]
+    slack["Slack<br/>platsec-demo"]
+    cloudtrail --> sgRule
+    cloudtrail --> s3Rule
+    sgRule --> apiDest
+    s3Rule --> apiDest
+  end
 
-  ct --> sg --> api --> lead
-  ct --> s3 --> api
-  slack --> lead
-  lead --> ctx --> chg
-  chg --> dry --> yann --> run
-  chg --> bld --> pr --> yann --> main --> tf
+  subgraph botsBox [Bots]
+    lead["AG Lead"]
+    notion["Notion AG cases"]
+    context["AG Context"]
+    changeBot["AG Change"]
+    builder["AG Builder"]
+    yann[Yann]
+  end
+
+  subgraph deployBox [Deploy]
+    mainBranch[main]
+    applyWf["terraform-<br/>apply.yml"]
+    terraform["infra fix_names<br/>and module fix"]
+  end
+
+  subgraph runBox [Run a fix]
+    invoker["ag-bot-invoker"]
+    reader["ag-reader"]
+    closeFn["ag-fix-<br/>close-open-port"]
+    restoreFn["ag-fix-restore-<br/>bucket-public-<br/>access-block"]
+    removeFn["ag-fix-remove-<br/>bucket-public-<br/>access-block"]
+  end
+
+  subgraph gatesBox [Guardrails]
+    allowList["allow-list"]
+    guardAudit["src/guard audit"]
+    tagAuto["auto-remediate true"]
+    tagPurpose["purpose<br/>ag-demo-synthetic"]
+    tagPublic["intended-public true"]
+    guardLabel["guard-change label"]
+  end
+
+  apiDest --> lead
+  slack -->|"tagged AG-lead"| lead
+  lead --> notion
+  lead --> context
+  context --> changeBot
+  changeBot --> builder
+  builder --> yann
+  yann --> mainBranch
+  mainBranch --> applyWf
+  applyWf --> terraform
+  terraform --> closeFn
+  terraform --> restoreFn
+  terraform --> removeFn
+  lead --> invoker
+  invoker --> closeFn
+  invoker --> restoreFn
+  invoker --> removeFn
+  allowList --> guardAudit
+  guardAudit --> tagAuto
+  tagAuto --> tagPurpose
+  tagPurpose --> tagPublic
+  tagPublic --> guardLabel
+  guardLabel --> closeFn
+  guardLabel --> restoreFn
+  guardLabel --> removeFn
 ```
 
-<p class="fine">README.md on main has no mermaid diagram, so this one was drawn for the deck. Keep it in sync with the README pull request. The security group rule, the API destination, the four bots, and terraform-apply.yml are in the repo. The S3 rule name is from the demo brief and is not in docs/intake.md. Fix Lambdas on main: ag-fix-close-open-port, ag-fix-restore-bucket-public-access-block, ag-fix-remove-bucket-public-access-block.</p>
+<p class="fine">Same nodes and edges as the mermaid diagram in README.md on PR #10, commit b6952f8. Keep the two diagrams in sync. ag-cloudtrail-sg-ingress-to-lead matches successful AuthorizeSecurityGroupIngress only. ag-cloudtrail-s3-public-access-to-lead, ag-bot-invoker, and ag-reader are created outside Terraform (manual). The Slack edge is the @AG-lead tag. That filter is bot config on AG Lead's Slack routine, not code in this repo.</p>
 
 ---
 

@@ -20,10 +20,38 @@
         pre.parentNode.replaceChild(diagram, pre);
       }
     }
+    var saved = [];
+    var diagrams = document.querySelectorAll('.mermaid');
+    for (var j = 0; j < diagrams.length; j++) {
+      var section = diagrams[j].closest('section');
+      if (!section) {
+        continue;
+      }
+      saved.push({
+        section: section,
+        hidden: section.hasAttribute('hidden'),
+        display: section.style.display,
+      });
+      section.removeAttribute('hidden');
+      section.style.display = 'block';
+    }
+
+    function restoreSections() {
+      for (var k = 0; k < saved.length; k++) {
+        if (saved[k].hidden) {
+          saved[k].section.setAttribute('hidden', '');
+        }
+        saved[k].section.style.display = saved[k].display;
+      }
+    }
+
     var fonts = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
     return fonts.then(function () {
       return mermaid.run({ querySelector: '.mermaid' });
-    }).then(loosenLabels);
+    }).then(loosenLabels).then(restoreSections, function (error) {
+      restoreSections();
+      throw error;
+    });
   }
 
   // The label box mermaid writes is a few pixels narrower than the text.
@@ -60,7 +88,14 @@
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: 'strict',
-    flowchart: { htmlLabels: false, padding: 18, nodeSpacing: 28, rankSpacing: 32 },
+    flowchart: {
+      htmlLabels: true,
+      wrappingWidth: 150,
+      padding: 10,
+      nodeSpacing: 18,
+      rankSpacing: 22,
+      useMaxWidth: true,
+    },
   });
 
   Promise.resolve(Reveal.initialize({

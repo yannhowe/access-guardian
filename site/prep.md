@@ -2,16 +2,14 @@
 
 This page is the script for the person giving the talk. It is a normal document, not slides. Facts come from this repo or from the demo brief. Where a number, a buyer, a voice setup, a persona line, or a click-path in the Grok Bot app is unknown, it is marked TODO (Yann).
 
-Read this before you present, because a few brief names are not in the repo:
+Read this before you present. The deck diagram uses the same node names and edges as the mermaid diagram in `README.md` on PR #10, commit `b6952f8`. Keep the two diagrams in sync.
 
-- `README.md` on main has no mermaid diagram. The deck draws one. Keep that picture in sync with the README pull request.
-- `docs/intake.md` documents one EventBridge rule, `ag-cloudtrail-sg-ingress-to-lead`, for a successful `AuthorizeSecurityGroupIngress`. The brief also names `ag-cloudtrail-s3-public-access-to-lead` for `PutBucketPublicAccessBlock`, `DeleteBucketPublicAccessBlock`, `PutBucketPolicy`, and `PutBucketAcl`. That second rule is not in this repo.
-- The brief says Slack `#platsec-demo` reaches AG Lead only when `@AG-lead` is tagged. This repo says there is a channel listener on `#platsec-demo` and does not describe that tag filter.
-- The brief names an invoke role `ag-bot-invoker`. `docs/aws-setup.md` gives the bots `lambda:InvokeFunction` on `ag-fix-*` and does not name that role.
-- The brief names `ag-reader` for read-only checks. This repo has no `ag-reader`. Each fix Lambda does its own reads.
-- The brief's three fix Lambdas are on main: `ag-fix-close-open-port`, `ag-fix-restore-bucket-public-access-block`, and `ag-fix-remove-bucket-public-access-block`.
-- Yann's Slack id `U0CAKUDP3L0` is from the brief. This repo does not store it.
-- `docs/aws-setup.md` says the close-open-port role revokes only a group tagged `purpose=ag-demo-synthetic`. The policy also requires `auto-remediate=true`, and the handler refuses the dry run and the apply unless that tag is exactly `true`. Follow the handler.
+- `ag-cloudtrail-sg-ingress-to-lead` matches successful `AuthorizeSecurityGroupIngress` only. That is what `docs/intake.md` documents. A failed call and a dry-run API call set `errorCode`, and those events are left out.
+- `ag-cloudtrail-s3-public-access-to-lead`, `ag-bot-invoker`, and `ag-reader` are created outside Terraform (manual). The S3 rule's event pattern is not written in this repository. This repository does not say which bot assumes `ag-reader`.
+- Slack `platsec-demo` reaches AG Lead only when the message tags `@AG-lead`. That keyword filter is real. It is bot config on AG Lead's Slack routine, not code in this repo.
+- The three fix Lambdas on main are `ag-fix-close-open-port`, `ag-fix-restore-bucket-public-access-block`, and `ag-fix-remove-bucket-public-access-block`.
+- Yann, Slack id `U0CAKUDP3L0`, is the only approver. The README on PR #10 records that id. The fix handlers do not.
+- `docs/aws-setup.md` says the close-open-port role revokes only a group tagged `purpose=ag-demo-synthetic`. The policy also requires `auto-remediate=true`, and the handler refuses the dry run and the apply unless that tag is exactly `true`. The handler does not check `purpose`. Follow the handler.
 
 ## Frame the business problem
 
@@ -38,7 +36,7 @@ Bucket that should stay blocked. Use a bucket whose name starts with `ag-demo-`,
 Then walk the same spine for either incident:
 
 1. CloudTrail hits the EventBridge rule, the API destination POSTs to AG Lead's webhook routine, and the routine run shows the case. The security group rule in the repo is `ag-cloudtrail-sg-ingress-to-lead`. The connection and the API destination are both named `ag-lead-webhook`. The target role is `ag-eventbridge-to-ag-lead`. The webhook URL and the API key are not in this repo. The key is held in the EventBridge connection.
-2. Open the Slack thread in `#platsec-demo`. The brief says AG Lead sees it when `@AG-lead` is tagged. Show that tag if you are following the brief.
+2. Open the Slack thread in `platsec-demo` and tag `@AG-lead`. That keyword filter is real. It is bot config on AG Lead's Slack routine, not code in this repo.
 3. AG Context and AG Change speak. If the fix key is already registered, Change reuses it. Context does not change AWS.
 4. Show the dry run. Leave `apply` out, or set it to false. For the security group, the command in `docs/architecture.md` is:
 
@@ -66,11 +64,11 @@ Expect `changed: false` and `reason` `dry_run` when the four flags are not all t
 
 5. Yann says yes. The brief says Yann, Slack id `U0CAKUDP3L0`, is the only approver. The bot may then invoke the same function with `apply` set to true. Lead does not set `apply` before that yes.
 6. A successful revoke has `changed: true` and `reason` `revoked`. A successful restore has `changed: true` and `reason` `restored`. Run it once more. The second run finds the desired state and returns `changed: false`.
-7. Notion closes the case. TODO (Yann): what the Notion page is called, who writes it, and what "closed" looks like. This repo does not describe Notion.
+7. AG Lead writes the case in Notion `AG cases`. TODO (Yann): what closed looks like on that page.
 
 There is a third Lambda, and it is a different story. `ag-fix-remove-bucket-public-access-block` deletes Block Public Access only on the bucket `ag-demo-public-10281729`, and only when that bucket has all three tags `intended-public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic`. The intended state comes from the `intended-public=true` tag. The handler does not read case text. AWS authorizes `DeletePublicAccessBlock` with `s3:PutBucketPublicAccessBlock`, which is the action on the allow-list. A dry run omits `apply`. `reason` is `dry_run` when a block configuration is present, `already_absent` when it is not, and `removed` after a successful apply. Do not use this function to open an arbitrary bucket. `ag-fix-restore-bucket-public-access-block` refuses a bucket tagged `intended-public=true` with `IntendedPublicBucket`.
 
-If the bucket incident never arrives on its own, check the diagnose list. The S3 EventBridge rule from the brief is not in `docs/intake.md`.
+If the bucket incident never arrives on its own, check the diagnose list. `ag-cloudtrail-s3-public-access-to-lead` is created outside Terraform (manual). Its event pattern is not written in this repository, and `docs/intake.md` does not describe it.
 
 ### Land the value
 
@@ -82,10 +80,10 @@ TODO (Yann): the sentence that ties this to a buyer's budget. The repo has no co
 
 Use this when the demo stalls. Check them in order.
 
-1. EventBridge rule. For the security group path, confirm `ag-cloudtrail-sg-ingress-to-lead` on the default bus, a successful `AuthorizeSecurityGroupIngress`, connection `ag-lead-webhook`, API destination `ag-lead-webhook` (HTTP POST, 1 request per second), role `ag-eventbridge-to-ag-lead` with `events:InvokeApiDestination` on that destination, and 3 retries within 1 hour. The input transformer fields are `eventName`, `eventTime`, `account`, `region`, `actorArn`, `sourceIp`, `groupId`, `protocol`, `fromPort`, `toPort`, `cidr`, `requestId`, `eventId`, and `source` (the constant `aws-cloudtrail`). A call that adds two rules, or only an IPv6 range, does not fill `cidr`. That delivery does not become a half-parsed case. The older rule `platsec-cloudtrail-open-ssh` and its Lambda are disabled and are not part of this repo. For the bucket path, the brief's rule is `ag-cloudtrail-s3-public-access-to-lead`. It is not documented here. If you cannot find it in the account, the bucket case will not arrive through EventBridge.
+1. EventBridge rule. For the security group path, confirm `ag-cloudtrail-sg-ingress-to-lead` on the default bus, a successful `AuthorizeSecurityGroupIngress`, connection `ag-lead-webhook`, API destination `ag-lead-webhook` (HTTP POST, 1 request per second), role `ag-eventbridge-to-ag-lead` with `events:InvokeApiDestination` on that destination, and 3 retries within 1 hour. The input transformer fields are `eventName`, `eventTime`, `account`, `region`, `actorArn`, `sourceIp`, `groupId`, `protocol`, `fromPort`, `toPort`, `cidr`, `requestId`, `eventId`, and `source` (the constant `aws-cloudtrail`). A call that adds two rules, or only an IPv6 range, does not fill `cidr`. That delivery does not become a half-parsed case. The older rule `platsec-cloudtrail-open-ssh` and its Lambda are disabled and are not part of this repo. For the bucket path, `ag-cloudtrail-s3-public-access-to-lead` is created outside Terraform (manual). Its event pattern is not written in this repository. If you cannot find that rule in the account, the bucket case will not arrive through EventBridge.
 2. Webhook routine run. AG Lead has a routine for the CloudTrail webhook. TODO (Yann): where that run is shown in the Grok Bot app. The URL is not in the repo.
-3. Slack keyword trigger. The brief says the channel reaches AG Lead only when `@AG-lead` is tagged. The repo documents a channel listener on `#platsec-demo` and no Slack code. If a message does nothing, confirm the tag from the brief and that you are in that channel.
-4. Assume the invoke role. The brief calls it `ag-bot-invoker`. The repo does not. What the repo does say: the bots get `lambda:InvokeFunction` on `ag-fix-*` only. They do not get `ec2:*`, `iam:*`, or permission to change the function. Region `ap-southeast-1`. An access denied on invoke is this check.
+3. Slack keyword trigger. AG Lead's Slack routine accepts channel `platsec-demo` only when the message tags `@AG-lead`. That filter is real bot config, not code in this repo. If a message does nothing, confirm the tag and the channel.
+4. Assume `ag-bot-invoker`. AG Lead assumes that role and invokes the fix Lambda. The role is created outside Terraform (manual). Its permission is `lambda:InvokeFunction` on `ag-fix-*`. It does not get `ec2:*`, `iam:*`, or permission to change the function. Region `ap-southeast-1`. An access denied on invoke is this check.
 5. Lambda logs. Terraform creates `/aws/lambda/ag-fix-<name>` and keeps it for 14 days. The functions on main are `ag-fix-close-open-port`, `ag-fix-restore-bucket-public-access-block`, and `ag-fix-remove-bucket-public-access-block`. The handler returns the AWS error code and message on a failed call.
 6. Missing tags. Match the error string.
    - Security group, rule still present: `MissingAutoRemediateTag`, `security group must have tag auto-remediate set to true`. The handler checks this on a dry run and on an apply. The IAM condition on the revoke also requires `purpose=ag-demo-synthetic`. A missing purpose tag can pass the handler's dry run and fail on apply with the AWS error.
@@ -98,7 +96,7 @@ Use this when the demo stalls. Check them in order.
    - Remove, any of the three tags missing or not exact: `MissingRequiredTags`, `bucket must have tags intended-public=true, auto-remediate=true, and purpose=ag-demo-synthetic`.
    - Remove, any other bucket: `InvalidInput`, and the message names `ag-demo-public-10281729`.
 
-There is no `ag-reader` Lambda in this repo to consult. The reads are `ec2:DescribeSecurityGroupRules` and `ec2:DescribeSecurityGroups` on the port fix, and `s3:GetBucketTagging` plus `s3:GetBucketPublicAccessBlock` on the bucket fixes.
+`ag-reader` handles read-only checks. It is created outside Terraform (manual). This repository does not say which bot assumes it. The fix Lambdas still do their own reads: `ec2:DescribeSecurityGroupRules` and `ec2:DescribeSecurityGroups` on the port fix, and `s3:GetBucketTagging` plus `s3:GetBucketPublicAccessBlock` on the bucket fixes.
 
 ## Open the system
 
@@ -110,9 +108,9 @@ TODO (Yann): a persona paragraph for each bot, in your words. The jobs below are
 
 ### AG Lead
 
-Routines, from the brief: one for the CloudTrail webhook, and one for Slack keyword tags. Connectors, from the brief: Slack, Notion, and GitHub.
+Routines: one for the CloudTrail webhook, and one for Slack. The Slack routine's keyword filter is `@AG-lead`. That filter is real bot config, not code in this repo. Connectors: Slack, Notion, and GitHub. Lead writes Notion `AG cases`.
 
-From the runbook: Lead opens the case from the webhook body or from Slack. Lead shows the plan, the Lambda name, the one action, and the dry-run result. Lead does not set `apply`. After the pull request exists, Lead checks the allow-list entry, the single action, and the pasted `npm test` and `npx tsc --noEmit` output.
+From the runbook: Lead opens the case from the webhook body or from Slack. Lead assumes `ag-bot-invoker` (created outside Terraform, manual) and shows the plan, the Lambda name, the one action, and the dry-run result. Lead does not set `apply` before Yann's yes. After the pull request exists, Lead checks the allow-list entry, the single action, and the pasted `npm test` and `npx tsc --noEmit` output.
 
 ### AG Context
 
@@ -174,12 +172,12 @@ Handoffs, in the order the runbook gives them:
 2. AG Lead asks AG Context whether the change is reasonable now.
 3. AG Context hands the case to AG Change.
 4. AG Change either reuses a registered fix or asks AG Builder to write one. A key off the allow-list stops here, with a human.
-5. For a fix that already exists, Lead shows the dry run. The bot invokes the Lambda. It does not call EC2 or S3 itself.
+5. For a fix that already exists, Lead shows the dry run. Lead assumes `ag-bot-invoker` and invokes the Lambda. It does not call EC2 or S3 itself.
 6. For a fix that has to be written, AG Builder hands a Cursor cloud agent a brief. The agent opens a pull request. The plan workflow runs `scripts/check-protected-paths.mjs` and, when `src/fixes/` or `infra/` changed, posts a Terraform plan.
 7. The pull request goes back to AG Lead, who checks the allow-list entry, the single action, and the pasted test output.
 8. Yann merges. A push to `main` runs `.github/workflows/terraform-apply.yml`, which applies Terraform for `ag-fix-*`.
 9. After the yes on the run, the same Lambda is invoked with `apply` set to true.
-10. Notion closes the case. TODO (Yann): the handoff into Notion. The brief says AG Lead uses the Notion connector. The page shape is not in the repo.
+10. AG Lead writes Notion `AG cases`. TODO (Yann): what closed looks like on that page.
 
 Human approvals, as the brief lists them, and what the repo actually enforces:
 
@@ -236,6 +234,6 @@ Skills. Two different things share the word.
 - A skill file in this repo (`.cursor/skills/writing-remediators/SKILL.md` or `writing-extractors/SKILL.md`) changes by pull request. `.cursor/` is protected, so Yann adds the `guard-change` label before that check can pass. An example: "If we want every new fix to require a second tag, that is an edit to the remediator skill and to the guard. The guard is a protected path. It is a pull request, not a live toggle."
 - A skill attached to a bot in the Grok Bot app is the live list. TODO (Yann): how that list is edited. An example of the request, not the clicks: "Detach the extractor skill from AG Change if Change must never read free text." The runbook already says Change does not call Grok.
 
-Routines. AG Lead's CloudTrail webhook routine and the Slack keyword routine are the two the brief names. The webhook endpoint was created by hand. It is not Terraform. The URL is not in the repo. An example: "Pointing the webhook at a new routine means updating the EventBridge API destination `ag-lead-webhook`, which `docs/intake.md` says was created with the AWS CLI, and updating the routine on AG Lead. I do not have the URL in this repo." Another example: "A new CloudTrail event, such as the S3 rule named in the brief, needs a hand-built EventBridge rule plus a routine that accepts that body's fields. This repo will not gain that rule from a bot profile edit."
+Routines. AG Lead has a CloudTrail webhook routine and a Slack routine whose keyword filter is `@AG-lead`. That filter is bot config. The webhook endpoint was created by hand. It is not Terraform. The URL is not in the repo. An example: "Pointing the webhook at a new routine means updating the EventBridge API destination `ag-lead-webhook`, which `docs/intake.md` says was created with the AWS CLI, and updating the routine on AG Lead. I do not have the URL in this repo." Another example: "Changing which Slack tag reaches Lead means editing that keyword on the Slack routine. `ag-cloudtrail-s3-public-access-to-lead` is created outside Terraform (manual). A bot profile edit does not create that rule."
 
 Voice. TODO (Yann): how voice is turned on, and which bot has it. If someone asks, say you will confirm it in the app after the talk rather than guessing a menu.
