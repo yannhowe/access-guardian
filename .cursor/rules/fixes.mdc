@@ -14,4 +14,6 @@ The handler makes exactly one hardcoded mutating call. A fix returns a resource 
 
 A world-open (`0.0.0.0/0` or `::/0`) sensitive port is always a finding. Any other world-open port is a finding unless the security group is tagged `public=true`. 80 and 443 pass only when tagged. The port list is `src/policy/sensitive-ports.ts`. `classifyIngress()` in `src/policy/classify-ingress.ts` applies it.
 
+`close-open-port` calls `classifyIngress()` on the named rule, with the security group tags, before it revokes. A verdict of `ok` is refused and not revoked. The result uses the existing failure shape: `ok: false`, `errorCode` `NotAFinding`, and `errorMessage` `rule is not a finding under the port rule`. A sensitive port on a `public=true` group is still revoked. The handler still requires `auto-remediate=true`. The policy is unchanged.
+
 Tests must show the one call, a rejected bad input, that no other resource is touched, and a second run. Follow `.cursor/skills/writing-remediators/SKILL.md` for the folder shape.

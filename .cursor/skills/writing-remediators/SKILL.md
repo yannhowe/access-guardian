@@ -45,7 +45,7 @@ Do not approve the change or set `apply` to true yourself. The intake in `docs/i
 
 | Folder | Finding key | IAM action | Input | Tags the handler checks |
 | --- | --- | --- | --- | --- |
-| `close-open-port` | `cloud:open_port` | `ec2:RevokeSecurityGroupIngress` | `caseId`, `securityGroupId`, `protocol`, `port`, `cidr`, `apply` | `auto-remediate=true` before a revoke. IAM also requires `purpose=ag-demo-synthetic`. The handler does not check `purpose`. |
+| `close-open-port` | `cloud:open_port` | `ec2:RevokeSecurityGroupIngress` | `caseId`, `securityGroupId`, `protocol`, `port`, `cidr`, `apply` | `auto-remediate=true` before a revoke. IAM also requires `purpose=ag-demo-synthetic`. The handler does not check `purpose`. It calls `classifyIngress()` on the named rule and refuses a verdict of `ok`. |
 | `restore-bucket-public-access-block` | `cloud:s3_public_access_block_removed` | `s3:PutBucketPublicAccessBlock` | `bucket`, `apply` | Requires `purpose=ag-demo-synthetic` and `auto-remediate=true`. Refuses `public=true` and leaves that bucket unchanged. IAM has no tag condition. |
 | `remove-bucket-public-access-block` | `cloud:s3_public_access_block_drift_public` | `s3:PutBucketPublicAccessBlock` | `bucket`, `apply` | Requires `public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic` before the delete. IAM requires `public=true` on the mutating statement. |
 
@@ -100,7 +100,7 @@ Construct exactly one mutating command. Each `new SomeCommand` must be an action
 
 Tag checks, in handler order, before the mutating send:
 
-- `close-open-port` reads the rules first. If the ingress rule is already gone, it returns `already_closed` and does not read tags. If the rule is present, it requires `auto-remediate=true`, including on a dry run that would revoke. A miss is `MissingAutoRemediateTag`.
+- `close-open-port` reads the rules first. If the ingress rule is already gone, it returns `already_closed` and does not read tags. If the rule is present, it requires `auto-remediate=true`, including on a dry run that would revoke. A miss is `MissingAutoRemediateTag`. It then calls `classifyIngress()` on the named rule with the group tags. A verdict of `ok` returns `NotAFinding` and does not revoke. A sensitive port is still revoked when the group is tagged `public=true`. The reads are the ones already in the policy.
 - Restore reads tags first. `public=true` returns `PublicBucket` and does not write. Then it requires `purpose=ag-demo-synthetic` (`BucketNotTagged` when that tag is missing) and `auto-remediate=true` (`MissingAutoRemediateTag`).
 - Remove reads tags first. All three tags must be present with the exact key and value, case-sensitive. A miss is `MissingRequiredTags`. It does not read case text or finding text.
 

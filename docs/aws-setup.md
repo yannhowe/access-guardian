@@ -58,7 +58,7 @@ A dry run omits `apply` or sets it to false. After Yann's yes, the bot invokes t
 
 ## Demo resources
 
-Tag any security group this demo may change with `purpose=ag-demo-synthetic` and `auto-remediate=true`. The close-open-port role can revoke ingress only when both tags match. The handler refuses, including on a dry run that would revoke, unless `auto-remediate=true` exactly, and it returns `MissingAutoRemediateTag`. A missing `purpose` tag fails the revoke in IAM, and the Lambda returns that AWS error.
+Tag any security group this demo may change with `purpose=ag-demo-synthetic` and `auto-remediate=true`. The close-open-port role can revoke ingress only when both tags match. The handler refuses, including on a dry run that would revoke, unless `auto-remediate=true` exactly, and it returns `MissingAutoRemediateTag`. It also calls `classifyIngress()` on the named rule and returns `NotAFinding` without revoking when the verdict is `ok`. A sensitive port on a `public=true` group is still revoked. A missing `purpose` tag fails the revoke in IAM, and the Lambda returns that AWS error.
 
 A bucket the restore fix may change uses a name that starts with `ag-demo-`. The handler requires `purpose=ag-demo-synthetic` and `auto-remediate=true`, and it leaves a bucket tagged `public=true` unchanged. The restore role is scoped to `arn:aws:s3:::ag-demo-*` and has no tag condition in IAM.
 

@@ -9,7 +9,7 @@ Read this before you present. The deck diagram uses the same node names and edge
 - Slack `platsec-demo` reaches AG Lead only when the message tags `@AG-lead`. That keyword filter is real. It is bot config on AG Lead's Slack routine, not code in this repo.
 - The three fix Lambdas on main are `ag-fix-close-open-port`, `ag-fix-restore-bucket-public-access-block`, and `ag-fix-remove-bucket-public-access-block`.
 - Yann, Slack id `U0CAKUDP3L0`, is the only approver. The README on PR #10 records that id. The fix handlers do not.
-- `docs/aws-setup.md` says the close-open-port role revokes only a group tagged `purpose=ag-demo-synthetic`. The policy also requires `auto-remediate=true`, and the handler refuses the dry run and the apply unless that tag is exactly `true`. The handler does not check `purpose`. Follow the handler.
+- `docs/aws-setup.md` says the close-open-port role revokes only a group tagged `purpose=ag-demo-synthetic`. The policy also requires `auto-remediate=true`, and the handler refuses the dry run and the apply unless that tag is exactly `true`. The handler does not check `purpose`. It calls `classifyIngress()` and does not revoke a rule whose verdict is `ok`. A sensitive port on a `public=true` group is still revoked. Follow the handler.
 
 ## Frame the business problem
 
@@ -29,7 +29,7 @@ An engineer, or a demo click, opens a door that the tags say should stay shut. C
 
 Pick one incident. Say which one you are showing. The two incidents use different Lambdas.
 
-Security group. Use a demo group already tagged `purpose=ag-demo-synthetic` and `auto-remediate=true`. The docs' synthetic id is `sg-demo0001`. Add one public ingress rule, tcp port 22 or tcp port 443, CIDR `0.0.0.0/0`. `docs/intake.md` matches a successful `AuthorizeSecurityGroupIngress` only. A failed call and a dry-run API call set `errorCode`, and those events are left out. The transformer sends the first permission and the first IPv4 range only. If `fromPort` and `toPort` differ, `close-open-port` does not apply and the case stays with a human.
+Security group. Use a demo group already tagged `purpose=ag-demo-synthetic` and `auto-remediate=true`. The docs' synthetic id is `sg-demo0001`. Add one public ingress rule, tcp port 22, CIDR `0.0.0.0/0`. Tcp port 443 from `0.0.0.0/0` is revoked only when the group is not tagged `public=true`. A `public=true` group keeps 443 and still loses 22. `docs/intake.md` matches a successful `AuthorizeSecurityGroupIngress` only. A failed call and a dry-run API call set `errorCode`, and those events are left out. The transformer sends the first permission and the first IPv4 range only. If `fromPort` and `toPort` differ, `close-open-port` does not apply and the case stays with a human.
 
 Bucket that should stay blocked. Use a bucket whose name starts with `ag-demo-`, tagged `purpose=ag-demo-synthetic` and `auto-remediate=true`, and not tagged `public=true`. A name that matches the handler is `ag-demo-walkthrough`. Turn Block Public Access off. That is the incident. The Lambda that turns the four flags back on is `ag-fix-restore-bucket-public-access-block`. Leave the bucket `ag-demo-public-10281729` out of this incident. That bucket is the public case below.
 
