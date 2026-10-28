@@ -28,7 +28,7 @@ What Grok decides: whether the reply is JSON that passed the caller's `validate`
 
 What code decides: whether those facts match the source, and whether a fix may run. A failure is not a guess.
 
-The advisory reader in `src/extractors/advisory/` is the Grok-backed extractor. It is not implemented. The folder README is the contract. `.cursor/skills/writing-extractors/SKILL.md` is the procedure.
+The advisory reader in `src/extractors/advisory/` is the Grok-backed extractor. The folder README is the contract. `.cursor/skills/writing-extractors/SKILL.md` is the procedure. Grok returns the package, the functions, the ranges, the fixed version, and any workaround. Code checks those facts against the prose and the trusted alert, then compares the ranges with `inventory/services.json`.
 
 ## What a fix is allowed to do
 
