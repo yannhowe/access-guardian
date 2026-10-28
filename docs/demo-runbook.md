@@ -51,7 +51,7 @@ Grok is called only for free text that code cannot parse. Each call goes through
 | Call | Where | What Grok decides | What code decides |
 | --- | --- | --- | --- |
 | `extract()` | `src/grok/client.ts`, the only HTTP call to xAI | Nothing about the case. It returns JSON that passed `validate`, or `no_key`, `timeout`, `http_error`, `bad_json`, or `schema_mismatch`. Temperature is 0. The wait is 15 seconds. | Whether the facts match the source, and whether a fix may run. On failure, do not act. |
-| Advisory reader | Not built. `src/extractors/advisory/README.md` | When built: `vulnerableFunctions`, `affectedRange`, and `fixedVersion` from advisory prose. | Whether each function name is in the prose, and whether the range and the fixed version equal the trusted alert. A miss is `invalid_facts`. No guessed version. |
+| Advisory reader | `src/extractors/advisory/read.ts` | `packageName`, `vulnerableFunctions`, `affectedRanges`, `fixedVersion`, and `workaround` from advisory prose, or a typed failure. | Whether each fact is supported by the prose, whether the canonical range and the fixed version equal the trusted alert, and which inventory services sit inside the ranges. A miss is `invalid_facts`. No guessed version. |
 | Slack prose | Grok Bot app, not this repo | The fact fields named in that call's schema, and only when the message is free text code cannot parse. | Whether those facts are complete enough to open a case. A failure opens nothing. |
 | CloudTrail webhook | No Grok call | | The bot reads the transformer fields. |
 | Context, Change, Yann's yes, merge | No Grok call | | Code and Yann. Grok does not decide that an actor was authorized. |
@@ -65,7 +65,7 @@ The client reads `XAI_API_KEY` from the environment. `XAI_MODEL` overrides the d
 - `infra/main.tf`: one Terraform name per fix. The module always sets the permissions boundary.
 - `tests/fixes/close-open-port.test.ts`: a fake AWS client. Default is dry-run. One revoke when apply is set. Bad input does not call AWS.
 - `tests/guard.test.ts`: the tree passes, and a fix off the list, a second action, or an xAI call outside the client fails.
-- `src/extractors/advisory/README.md`: the empty advisory reader slot.
+- `src/extractors/advisory/README.md`: the advisory reader contract.
 - `inventory/services.json`: synthetic services and the exact npm versions they run. Teammates read it to see whether an advisory package is installed.
 
 Commands:
@@ -77,11 +77,11 @@ npx tsc --noEmit
 
 ## Advisory reader
 
-Build the advisory reader in `src/extractors/advisory/` when a brief asks for it, following the writing-extractors skill. Leave the CloudTrail path on structured fields. Do not add a second Grok client. When the module exists, replace the empty-slot test with tests that mock `fetch`.
+The advisory reader lives in `src/extractors/advisory/` and follows the writing-extractors skill. Leave the CloudTrail path on structured fields. Do not add a second Grok client. Tests mock `fetch`.
 
 ## Service inventory
 
-`inventory/services.json` is synthetic. Teammates read it to decide whether an advisory affects a service we run. `@acme-demo/yaml-lite` is on `billing-api` at `2.3.1` (affected), on `ledger-worker` at `1.9.2` (affected, old line, no fix), and on `portal-web` at `2.4.3` (fixed). `notify-relay` and `directory-sync` do not use it. Versions in the file are exact. This repo does not match version ranges. See `inventory/README.md`.
+`inventory/services.json` is synthetic. The advisory reader compares a verified range with these exact versions. `@acme-demo/yaml-lite` is on `billing-api` at `2.3.1` (affected), on `ledger-worker` at `1.9.2` (affected, old line, no fix on 1.x), and on `portal-web` at `2.4.3` (fixed). `notify-relay` and `directory-sync` do not use it. See `inventory/README.md`.
 
 ## Trade-off
 

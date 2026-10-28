@@ -4,7 +4,7 @@ This file is synthetic demo data. The service names, teams, environments, and pa
 
 Grok Bot teammates read `services.json` when an advisory names a package. Each service has an owner team, an environment, and npm dependencies pinned to exact versions. There are no version ranges in this file.
 
-A teammate looks up the package name and the installed version. That lookup answers whether we run the package, and which version each service has. It does not decide whether a version sits inside an advisory range. The advisory reader, when it is built, supplies the affected range and the fixed version. Those facts are compared with this inventory. This repo does not do that comparison yet.
+A teammate looks up the package name and the installed version. That lookup answers whether we run the package, and which version each service has. It does not decide whether a version sits inside an advisory range. The advisory reader supplies the affected ranges and the fixed version. Code compares those facts with this inventory. The comparison does not call Grok.
 
 For the demo package `@acme-demo/yaml-lite`:
 

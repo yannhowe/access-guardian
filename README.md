@@ -6,7 +6,7 @@ Defensive cloud security demo. Grok Bot teammates (AG Lead, AG Context, AG Chang
 - `src/fixes/<name>/` is one Lambda. The starter revokes one security group ingress rule. Dry-run unless `apply` is `true`.
 - `infra/` creates role `ag-fix-<name>` and function `ag-fix-<name>`. The one-time AWS bootstrap is `docs/aws-setup.md`.
 - `tests/guard.test.ts` blocks a fix that is not on the list, a policy that opens or deletes, a missing Terraform entry, and any xAI call outside the Grok client.
-- `src/extractors/advisory/` is empty on purpose. The advisory reader is not implemented yet. Follow `.cursor/skills/writing-extractors/SKILL.md` when a brief asks for it.
+- `src/extractors/advisory/` reads advisory prose through `extract()` and compares the verified ranges with `inventory/services.json`. Follow `.cursor/skills/writing-extractors/SKILL.md`.
 - `docs/intake.md` describes the EventBridge intake. It was created by hand with the AWS CLI. There is no Terraform here.
 - `docs/demo-runbook.md` is the runbook.
 
