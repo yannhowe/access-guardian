@@ -6,7 +6,28 @@
 # The connection ag-lead-webhook, the secret inside that connection, and the
 # API destination ag-lead-webhook are not resources. Apply cannot create,
 # update, rotate, or delete webhook auth. The connection is read by name.
-# The destination ARN is a variable Yann fills. It is not invented here.
+# The destination ARN is built from the account on permissions_boundary_arn,
+# the provider region, and the known destination id. It is not a second
+# destination.
+
+locals {
+  # Plan and apply already pass permissions_boundary_arn. Its account is the
+  # account Terraform runs in. Parsing it keeps that account out of git and
+  # does not call AWS. sts:GetCallerIdentity is not required.
+  sg_ingress_account_id = one(regex(
+    "^arn:aws:iam::([0-9]{12}):policy/ag-fix-boundary$",
+    var.permissions_boundary_arn,
+  ))
+
+  # Live target id on the rule. This is the target id, not the API destination id.
+  sg_ingress_target_id = "ag-lead-webhook"
+
+  eventbridge_to_ag_lead_role_arn = "arn:aws:iam::${local.sg_ingress_account_id}:role/ag-eventbridge-to-ag-lead"
+
+  # Destination id of the hand-built API destination. Terraform does not manage
+  # that destination and does not call events:DescribeApiDestination.
+  lead_webhook_api_destination_arn = "arn:aws:events:${var.region}:${local.sg_ingress_account_id}:api-destination/ag-lead-webhook/6d9dbab1-d10f-4dd6-9951-f505036e202f"
+}
 
 data "aws_cloudwatch_event_connection" "ag_lead_webhook" {
   name = "ag-lead-webhook"
@@ -20,7 +41,7 @@ resource "aws_cloudwatch_event_rule" "sg_ingress" {
     "detail-type" = [
       "AWS API Call via CloudTrail",
     ]
-    account = [var.ag_cloudtrail_sg_ingress_account_id]
+    account = [local.sg_ingress_account_id]
     detail = {
       eventSource = ["ec2.amazonaws.com"]
       eventName = [
@@ -42,9 +63,9 @@ resource "aws_cloudwatch_event_rule" "sg_ingress" {
 resource "aws_cloudwatch_event_target" "sg_ingress" {
   rule           = aws_cloudwatch_event_rule.sg_ingress.name
   event_bus_name = aws_cloudwatch_event_rule.sg_ingress.event_bus_name
-  target_id      = var.ag_cloudtrail_sg_ingress_target_id
-  arn            = var.ag_lead_webhook_api_destination_arn
-  role_arn       = var.ag_eventbridge_to_ag_lead_role_arn
+  target_id      = local.sg_ingress_target_id
+  arn            = local.lead_webhook_api_destination_arn
+  role_arn       = local.eventbridge_to_ag_lead_role_arn
 
   lifecycle {
     prevent_destroy = true
@@ -60,6 +81,11 @@ resource "aws_cloudwatch_event_target" "sg_ingress" {
       dead_letter_config,
       http_target,
     ]
+
+    precondition {
+      condition     = var.region == "ap-southeast-1"
+      error_message = "API destination ag-lead-webhook is in ap-southeast-1. var.region must stay ap-southeast-1 so the target ARN matches the live destination and apply does not rewrite the target."
+    }
 
     precondition {
       condition = (
@@ -78,5 +104,5 @@ import {
 
 import {
   to = aws_cloudwatch_event_target.sg_ingress
-  id = "ag-cloudtrail-sg-ingress-to-lead/${var.ag_cloudtrail_sg_ingress_target_id}"
+  id = "ag-cloudtrail-sg-ingress-to-lead/${local.sg_ingress_target_id}"
 }

@@ -1,10 +1,10 @@
 # Intake
 
-Rule `ag-cloudtrail-sg-ingress-to-lead` and its one target are Terraform in `infra/intake.tf`. They were created by hand in `ap-southeast-1` and are imported. There is no Lambda on this path. The account id is not stored in this repo. Pass the account the live rule already filters as `ag_cloudtrail_sg_ingress_account_id`.
+Rule `ag-cloudtrail-sg-ingress-to-lead` and its one target are Terraform in `infra/intake.tf`. They were created by hand in `ap-southeast-1` and are imported. There is no Lambda on this path. The account id is not stored in this repo. Terraform takes it from `permissions_boundary_arn`, the `ag-fix-boundary` policy ARN that plan and apply already pass. That account is the account Terraform runs in. No new input and no new AWS read are required.
 
-The webhook URL and the API key are not in this repo. The key is held only in the EventBridge connection. Terraform does not create, update, or rotate connection `ag-lead-webhook`, the secret inside it, or API destination `ag-lead-webhook`. The connection is a read-only data source. The destination ARN is the variable `ag_lead_webhook_api_destination_arn`. Apply cannot change webhook auth.
+The webhook URL and the API key are not in this repo. The key is held only in the EventBridge connection. Terraform does not create, update, or rotate connection `ag-lead-webhook`, the secret inside it, or API destination `ag-lead-webhook`. The connection is a read-only data source. The destination ARN is built from that same account, `var.region`, and destination id `6d9dbab1-d10f-4dd6-9951-f505036e202f`. Apply cannot change webhook auth.
 
-The target id and the role ARN are not in this repo. Pass `ag_cloudtrail_sg_ingress_target_id` and `ag_eventbridge_to_ag_lead_role_arn` at plan time.
+The target id is the known id `ag-lead-webhook`. The role ARN is role `ag-eventbridge-to-ag-lead` in that same account. Neither is a separate input.
 
 ## Rule
 
@@ -12,7 +12,7 @@ EventBridge rule `ag-cloudtrail-sg-ingress-to-lead` on the default bus.
 
 It matches successful `AuthorizeSecurityGroupIngress` and `ModifySecurityGroupRules` CloudTrail events. A failed call and a dry-run set `errorCode`, and those events are left out.
 
-The pattern keeps `source` `aws.ec2`, `detail-type` `AWS API Call via CloudTrail`, the account passed at plan time, `detail.eventSource` `ec2.amazonaws.com`, and `detail.errorCode` exists false. `detail.eventName` is `AuthorizeSecurityGroupIngress` and `ModifySecurityGroupRules`.
+The pattern keeps `source` `aws.ec2`, `detail-type` `AWS API Call via CloudTrail`, the account from `permissions_boundary_arn`, `detail.eventSource` `ec2.amazonaws.com`, and `detail.errorCode` exists false. `detail.eventName` is `AuthorizeSecurityGroupIngress` and `ModifySecurityGroupRules`.
 
 Description and tags on the live rule are left as they are. Terraform does not rewrite them.
 
@@ -24,7 +24,7 @@ Authorization is an API key. The header is `Authorization: Bearer <key>`. The ke
 
 ## API destination
 
-API destination `ag-lead-webhook`. HTTP method POST. Invocation rate is 1 request per second. The endpoint is the AG Lead Grok Bot routine webhook. The destination id is `6d9dbab1-d10f-4dd6-9951-f505036e202f`. Terraform does not manage the destination. The target ARN variable must be that destination.
+API destination `ag-lead-webhook`. HTTP method POST. Invocation rate is 1 request per second. The endpoint is the AG Lead Grok Bot routine webhook. The destination id is `6d9dbab1-d10f-4dd6-9951-f505036e202f`. Terraform does not manage the destination. The target ARN is that destination in `ap-southeast-1`, in the account from `permissions_boundary_arn`.
 
 ## Target role and retries
 
@@ -69,7 +69,7 @@ A call that adds two rules, or only an IPv6 range, does not fill `cidr` from the
 - `events:ListTargetsByRule` reads the target. There is no separate describe call for a target.
 - `events:DescribeConnection` reads connection `ag-lead-webhook`. It does not read the secret value.
 
-`events:PutTargets` and `iam:PassRole` on `ag-eventbridge-to-ag-lead` are not used when the target matches. Do not apply a plan that changes the target. `events:DescribeApiDestination` is not used. The destination ARN is a variable. No connection, secret, or destination write is used.
+`events:PutTargets` and `iam:PassRole` on `ag-eventbridge-to-ag-lead` are not used when the target matches. Do not apply a plan that changes the target. `events:DescribeApiDestination` is not used. The destination ARN is built in configuration. `sts:GetCallerIdentity` is not used. No connection, secret, or destination write is used.
 
 The plan role needs the same reads (`events:DescribeRule`, `events:ListTagsForResource`, `events:ListTargetsByRule`, `events:DescribeConnection`) and does not need `events:PutRule`.
 

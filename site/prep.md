@@ -210,7 +210,7 @@ Shipped today:
 Before an enterprise rollout, the brief says these change. None of them are built. TODO (Yann) on each choice:
 
 - SSO and RBAC for approvers, in place of one Slack id. Today the brief names Yann, `U0CAKUDP3L0`, as the only approver.
-- More than one account. The intake doc describes one account, passed at plan time and not written in git. This repo's Terraform manages `ag-fix-*` and rule `ag-cloudtrail-sg-ingress-to-lead` in the account the GitHub roles can reach.
+- More than one account. The intake doc describes one account, taken from the permissions boundary ARN and not written in git. This repo's Terraform manages `ag-fix-*` and rule `ag-cloudtrail-sg-ingress-to-lead` in the account the GitHub roles can reach.
 - Secrets management. The webhook key stays in the EventBridge connection. `XAI_API_KEY` is an environment variable. TODO (Yann): the store you want instead.
 - Audit log retention. The Lambda log groups are 14 days. TODO (Yann): the retention you want for those logs and for the bot transcripts.
 - Rate limits. The documented limit is 1 API destination request per second, with 3 retries in 1 hour. TODO (Yann): any other limit.
