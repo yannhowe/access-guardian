@@ -19,6 +19,12 @@ export const ALLOWED_FIXES = {
     summary: 'Revoke one ingress rule on one security group',
     undo: 'Authorize that same ingress rule again',
   },
+  'restore-bucket-public-access-block': {
+    findingKey: 'cloud:s3_public_access_block_removed',
+    action: 's3:PutBucketPublicAccessBlock',
+    summary: 'Turn on all four Block Public Access flags for one bucket',
+    undo: 'Turn those four Block Public Access flags off again for that bucket',
+  },
 } as const satisfies Record<
   string,
   {
