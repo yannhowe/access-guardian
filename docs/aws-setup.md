@@ -14,8 +14,8 @@ Trust the plan role and the apply role only for this repository. Restrict the pl
 
 Create two roles.
 
-- `AG_TF_PLAN_ROLE_ARN` can read. It needs to read the state bucket and the lock table, and to read `ag-fix-*` roles, role policies, functions, and log groups. It does not create, change, or delete them.
-- `AG_TF_APPLY_ROLE_ARN` can change only `ag-fix-*` roles, their inline policies, `ag-fix-*` functions, and `/aws/lambda/ag-fix-*` log groups. It can write the state object and the lock table. It can pass `ag-fix-*` roles to `lambda.amazonaws.com`. It cannot change the boundary policy, other roles, or other functions.
+- `AG_TF_PLAN_ROLE_ARN` can read. It needs to read the state bucket and the lock table, and to read `ag-fix-*` roles, role policies, functions, and log groups. It also needs the intake reads in [intake.md](intake.md): `events:DescribeRule`, `events:ListTagsForResource`, `events:ListTargetsByRule`, and `events:DescribeConnection`. It does not create, change, or delete them.
+- `AG_TF_APPLY_ROLE_ARN` can change `ag-fix-*` roles, their inline policies, `ag-fix-*` functions, and `/aws/lambda/ag-fix-*` log groups. It can write the state object and the lock table. It can pass `ag-fix-*` roles to `lambda.amazonaws.com`. For rule `ag-cloudtrail-sg-ingress-to-lead` it also needs the actions listed in [intake.md](intake.md). It cannot change the boundary policy, other roles, or other functions. It cannot create, update, or rotate the EventBridge connection, its secret, or the API destination.
 
 Put the two ARNs in the repository variables of those names.
 

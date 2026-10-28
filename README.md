@@ -76,7 +76,7 @@ flowchart TD
 
 CloudTrail events go through EventBridge to AG Lead. Lead records the case in Notion under AG cases and talks with Yann in Slack. Cases are discussed in #platform-security. Lead asks AG Context for IAM, HR, and tags, and Context passes the case to AG Change. When a fix exists, Change runs the ag-fix Lambda. The Lambda does a dry run, then applies, and the write goes to AWS. When no fix exists, Change asks AG Builder. Builder opens a GitHub pull request. Build discussion is in #platform-security-build. Yann merges, and Terraform deploys the Lambda.
 
-The four bots are not code in this repository. The EventBridge intake is still created by hand. See [docs/intake.md](docs/intake.md). That rule is not in Terraform. The intake Lambda is not in this repository. The daily report is the parser here, and it reads both `AuthorizeSecurityGroupIngress` and `ModifySecurityGroupRules`.
+The four bots are not code in this repository. Rule `ag-cloudtrail-sg-ingress-to-lead` and its target are Terraform in `infra/intake.tf`. See [docs/intake.md](docs/intake.md). The connection, the API destination, and the S3 rule are still created by hand. The intake Lambda is not in this repository. The daily report is the parser here, and it reads both `AuthorizeSecurityGroupIngress` and `ModifySecurityGroupRules`.
 
 ## Deployed fixes
 
@@ -136,7 +136,7 @@ After apply, set the value of the secret `ag-report-daily-slack-bot-token`. Terr
 
 `ModifySecurityGroupRules` is not a fix and it adds no IAM action. The daily report reads `ModifySecurityGroupRulesRequest`: `GroupId`, and `SecurityGroupRule` items that carry `SecurityGroupRuleId` and `SecurityGroupRule` (`IpProtocol`, `FromPort`, `ToPort`, and one of `CidrIpv4`, `CidrIpv6`, or `ReferencedGroupId`). Each edited rule is judged with `classifyIngress()`, the same way as a new rule. A `ReferencedGroupId` source has no CIDR. A missing or malformed field, including free text where a structured field belongs, is reported as `ingress unparsed` and is not treated as ok.
 
-The hand-built EventBridge rule `ag-cloudtrail-sg-ingress-to-lead` is not in this repository, so this change does not add `ModifySecurityGroupRules` to that rule. `docs/intake.md` still describes it as matching successful `AuthorizeSecurityGroupIngress` only.
+Rule `ag-cloudtrail-sg-ingress-to-lead` in `infra/intake.tf` matches successful `AuthorizeSecurityGroupIngress` and `ModifySecurityGroupRules`. The input transformer is unchanged, so a modify event may not fill `groupId`, `protocol`, `fromPort`, `toPort`, or `cidr`. The S3 rule and the intake Lambda are not part of that Terraform.
 
 ## Opt-in tags
 
