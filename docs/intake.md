@@ -1,50 +1,36 @@
 # Intake
 
-The intake is not in this repo. Create it by hand in the AWS console, in `ap-southeast-1`. Use a scoped IAM principal. Do not use the account root key. Do not commit the webhook URL or the API key.
+The intake is not code in this repo. It was created by hand with the AWS CLI in account `022076688650`, region `ap-southeast-1`. There is no Terraform here, and there is no Lambda on this path. An end-to-end test on a throwaway security group was delivered successfully.
 
-There is no Lambda. CloudTrail reaches the Grok Bot as an EventBridge API destination POST.
+The webhook URL and the API key are not in this repo. The key is held only in the EventBridge connection.
 
-The account must already send management events to EventBridge. This setup does not create a trail.
+## Rule
 
-## 1. Rule
+EventBridge rule `ag-cloudtrail-sg-ingress-to-lead` on the default bus.
 
-EventBridge rule on the default bus. A workable name is `access-guardian-sg-ingress`.
+It matches successful `AuthorizeSecurityGroupIngress` CloudTrail events in account `022076688650`. A failed call and a dry-run set `errorCode`, and those events are left out.
 
-Set the state to `ENABLED_WITH_ALL_CLOUDTRAIL_MANAGEMENT_EVENTS`. The state `ENABLED` drops CloudTrail events.
+## Connection
 
-Match a successful `AuthorizeSecurityGroupIngress` from EC2. A failed call and a dry-run set `errorCode`, and those events are left out.
+EventBridge connection `ag-lead-webhook`.
 
-```json
-{
-  "source": ["aws.ec2"],
-  "detail-type": ["AWS API Call via CloudTrail"],
-  "detail": {
-    "eventSource": ["ec2.amazonaws.com"],
-    "eventName": ["AuthorizeSecurityGroupIngress"],
-    "errorCode": [{ "exists": false }]
-  }
-}
-```
+Authorization is an API key. The header is `Authorization: Bearer <key>`. The key stays in the connection.
 
-The starter fix closes one IPv4 rule. The transformer below reads that shape. Other ingress APIs use a different request body, so they are not in this rule.
+## API destination
 
-## 2. Connection
+API destination `ag-lead-webhook`. HTTP method POST. Invocation rate is 1 request per second. The endpoint is the AG Lead Grok Bot routine webhook.
 
-EventBridge connection. Authorization type is API key.
+## Target role and retries
 
-The header name is the name the Grok Bot routine expects. The header value is the secret. Type both into the connection. The value stays in AWS. It does not go in git, in a log, or in chat.
+The rule target uses IAM role `ag-eventbridge-to-ag-lead`. That role may call `events:InvokeApiDestination` on destination `ag-lead-webhook` and nothing else.
 
-## 3. API destination
+The target retries 3 times within 1 hour.
 
-EventBridge API destination. HTTP method POST. Endpoint is the Grok Bot routine webhook URL (https).
+## Input transformer
 
-The rule's target is this destination. Give the target an IAM role that may call `events:InvokeApiDestination` on this destination and nothing else.
+Every value below is sent as a string. `protocol`, `fromPort`, `toPort`, and `cidr` come from the first permission and the first IP range only. `source` is the constant `aws-cloudtrail`, not a field copied from the event.
 
-## 4. Input transformer
-
-The target sends only these fields. In the console, each variable name maps to one path. The template below uses those names. `eventTime` is written out as `time`. `fromPort` and `toPort` are written out together as `portRange`.
-
-| Variable | Path |
+| Field | Where it comes from |
 | --- | --- |
 | eventName | `$.detail.eventName` |
 | eventTime | `$.detail.eventTime` |
@@ -52,27 +38,17 @@ The target sends only these fields. In the console, each variable name maps to o
 | region | `$.region` |
 | actorArn | `$.detail.userIdentity.arn` |
 | sourceIp | `$.detail.sourceIPAddress` |
-| securityGroupId | `$.detail.requestParameters.groupId` |
+| groupId | `$.detail.requestParameters.groupId` |
+| protocol | `$.detail.requestParameters.ipPermissions.items[0].ipProtocol` |
 | fromPort | `$.detail.requestParameters.ipPermissions.items[0].fromPort` |
 | toPort | `$.detail.requestParameters.ipPermissions.items[0].toPort` |
 | cidr | `$.detail.requestParameters.ipPermissions.items[0].ipRanges.items[0].cidrIp` |
 | requestId | `$.detail.requestID` |
+| eventId | `$.detail.eventID` |
+| source | constant `aws-cloudtrail` |
 
-Console template. EventBridge fills each `<variable>` from the path above. It quotes string values, so the bot should accept strings. `from` and `to` may arrive as strings or numbers.
+A call that adds two rules, or only an IPv6 range, does not fill `cidr` from these paths. EventBridge then has nothing complete to POST. That delivery does not become a half-parsed case.
 
-```text
-{
-  "eventName": <eventName>,
-  "time": <eventTime>,
-  "account": <account>,
-  "region": <region>,
-  "actorArn": <actorArn>,
-  "sourceIp": <sourceIp>,
-  "securityGroupId": <securityGroupId>,
-  "portRange": { "from": <fromPort>, "to": <toPort> },
-  "cidr": <cidr>,
-  "requestId": <requestId>
-}
-```
+## Not part of this repo
 
-The paths assume one permission item and one IPv4 CIDR. A call that adds two rules, or only an IPv6 range, does not fill these paths. EventBridge then has nothing complete to POST. That delivery does not become a half-parsed case.
+The older rule `platsec-cloudtrail-open-ssh` and its Lambda are disabled. They are not part of this repo.

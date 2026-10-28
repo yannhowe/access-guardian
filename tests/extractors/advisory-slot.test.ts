@@ -1,6 +1,6 @@
 /**
  * The advisory reader is intentionally not implemented.
- * Replace this file with tests of the reader when it is built live.
+ * Replace this file with tests of the reader when it is built.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';

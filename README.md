@@ -5,9 +5,9 @@ Defensive cloud security demo. Grok Bot teammates (AG Lead, AG Context, AG Chang
 - `src/grok/client.ts` is the only xAI call. Strict JSON schema, temperature 0, 15 second timeout, fails closed.
 - `src/fixes/` is the allow-list, the registry, and one starter fix: revoke one security group ingress rule. Dry-run unless `apply` is `true`.
 - `tests/guard.test.ts` blocks a fix that is not on the list, a fix with more than one action, and any xAI call outside the Grok client.
-- `src/extractors/advisory/` is empty on purpose. The advisory reader is built live. Follow `.cursor/skills/writing-extractors/SKILL.md`.
-- `docs/intake.md` describes the EventBridge intake. It is created by hand. There is no Terraform here.
-- `docs/demo-runbook.md` is the interview walkthrough.
+- `src/extractors/advisory/` is empty on purpose. The advisory reader is not implemented yet. Follow `.cursor/skills/writing-extractors/SKILL.md` when a brief asks for it.
+- `docs/intake.md` describes the EventBridge intake. It was created by hand with the AWS CLI. There is no Terraform here.
+- `docs/demo-runbook.md` is the runbook.
 
 Node 20 or newer.
 

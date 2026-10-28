@@ -1,14 +1,12 @@
 # Demo runbook
 
-Interview: Thursday 29 Oct 2026, 10:00 SGT.
-
 Access Guardian watches for an open security group port and will not close it unless the change is on an allow-list, the plan is a dry-run, Yann says yes, and Yann merges the code. The bots talk. This repo holds the gates.
 
 Use synthetic data only. A safe group id is `sg-demo0001`. A safe account id in examples is `111122223333`. A safe source address is `203.0.113.24`. Do not show a live key, a webhook secret, or the AWS root key.
 
 ## Two ways a case reaches AG Lead
 
-1. CloudTrail. Someone calls `AuthorizeSecurityGroupIngress`. The hand-built EventBridge rule matches it. The API destination POSTs the structured body from `docs/intake.md` to the Grok Bot routine webhook. No Lambda, and no code in this repo. The bot reads `eventName`, `time`, `account`, `region`, `actorArn`, `sourceIp`, `securityGroupId`, `portRange`, `cidr`, and `requestId` in code. That path does not call Grok.
+1. CloudTrail. Someone calls `AuthorizeSecurityGroupIngress`. The EventBridge rule in `docs/intake.md` matches it. The API destination POSTs the structured body to the AG Lead routine webhook. No Lambda, and no code in this repo. The bot reads `eventName`, `eventTime`, `account`, `region`, `actorArn`, `sourceIp`, `groupId`, `protocol`, `fromPort`, `toPort`, `cidr`, `requestId`, `eventId`, and `source` in code. That path does not call Grok.
 2. Slack. A person writes in `#platsec-demo`. The Grok Bot channel listener receives it. No Slack code lives here. If the message is free text that code cannot parse, Lead may extract facts. If the listener already has structured fields, it does not call Grok.
 
 A sample webhook body, all synthetic:
@@ -16,19 +14,25 @@ A sample webhook body, all synthetic:
 ```json
 {
   "eventName": "AuthorizeSecurityGroupIngress",
-  "time": "2026-10-29T02:00:00Z",
+  "eventTime": "2026-03-15T02:34:15Z",
   "account": "111122223333",
   "region": "ap-southeast-1",
   "actorArn": "arn:aws:iam::111122223333:user/demo",
   "sourceIp": "203.0.113.24",
-  "securityGroupId": "sg-demo0001",
-  "portRange": { "from": "22", "to": "22" },
+  "groupId": "sg-demo0001",
+  "protocol": "tcp",
+  "fromPort": "22",
+  "toPort": "22",
   "cidr": "0.0.0.0/0",
-  "requestId": "example-request-id"
+  "requestId": "example-request-id",
+  "eventId": "example-event-id",
+  "source": "aws-cloudtrail"
 }
 ```
 
-If `from` and `to` are the same single port, the starter fix can plan a revoke of that port. If they differ, this fix does not apply. The case stays with a human. The fix revokes one port, not a range.
+The live account and resource names are in `docs/intake.md`. This sample uses the same fields with synthetic values. Every field arrives as a string.
+
+If `fromPort` and `toPort` are the same single port, the starter fix can plan a revoke of that port. If they differ, this fix does not apply. The case stays with a human. The fix revokes one port, not a range.
 
 ## Bot flow
 
@@ -60,7 +64,7 @@ The client reads `XAI_API_KEY` from the environment. `XAI_MODEL` overrides the d
 - `src/fixes/close-open-port.ts`: `ACTION` is `RevokeSecurityGroupIngress`. `closeOpenPort` returns the plan unless `apply` is `true`.
 - `tests/fixes/close-open-port.test.ts`: a fake AWS client. Default is dry-run. One `send` when apply is set. Bad input does not send.
 - `tests/guard.test.ts`: the tree passes, and a fix off the list, a second action, or an xAI call outside the client fails.
-- `src/extractors/advisory/README.md`: the empty slot for the live build.
+- `src/extractors/advisory/README.md`: the empty advisory reader slot.
 
 Commands:
 
@@ -69,14 +73,14 @@ npm test
 npx tsc --noEmit
 ```
 
-## Live build
+## Advisory reader
 
-Build the advisory reader in `src/extractors/advisory/`, following the writing-extractors skill. Leave the CloudTrail path on structured fields. Do not add a second Grok client. When the module exists, replace the empty-slot test with tests that mock `fetch`.
+Build the advisory reader in `src/extractors/advisory/` when a brief asks for it, following the writing-extractors skill. Leave the CloudTrail path on structured fields. Do not add a second Grok client. When the module exists, replace the empty-slot test with tests that mock `fetch`.
 
 ## Trade-off
 
 The main remaining risk is a false "authorized" verdict. That is a missed alert. If Context or Change treats the open port as allowed when it was not, Lead does not raise it, and the rule stays. The allow-list, the dry-run, Yann's yes, and Yann's merge limit what a fix can do after a case is in motion. They do not catch a case that was dropped as authorized. Grok is not the backstop for that decision, because Grok is not asked to authorize.
 
-A smaller miss sits on the intake. The transformer reads one IPv4 permission. Two rules, or an IPv6-only rule, may never reach the webhook. CloudTrail still has the API call. That is a missed delivery, not a false authorized verdict.
+A smaller miss sits on the intake. The transformer reads the first permission and the first IPv4 range. Two rules, or an IPv6-only rule, may never reach the webhook. CloudTrail still has the API call. That is a missed delivery, not a false authorized verdict.
 
 Fail closed everywhere this repo does decide: a bad rule, a guard failure, a Grok timeout, or a schema miss produces no AWS call and no invented fact.

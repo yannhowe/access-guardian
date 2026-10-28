@@ -15,7 +15,7 @@ Dry-run is the default. `closeOpenPort` calls AWS only when the third argument i
 
 Two triggers, both outside this repo.
 
-1. CloudTrail. An EventBridge rule matches a security group ingress change and an API destination POSTs a short JSON body to a Grok Bot routine webhook. There is no Lambda. The pieces are listed in `docs/intake.md`. They are created by hand. This repo has no Terraform.
+1. CloudTrail. An EventBridge rule matches a security group ingress change and an API destination POSTs a short JSON body to the AG Lead routine webhook. There is no Lambda. The pieces are listed in `docs/intake.md`. They were created by hand with the AWS CLI. This repo has no Terraform.
 2. Slack. A channel listener on `#platsec-demo`. No Slack code lives here.
 
 The CloudTrail body is structured, so the bot reads it in code. Grok is not used to parse it. Slack text is free text. Grok is called only when code cannot parse that text, and only through the one client.
@@ -28,7 +28,7 @@ What Grok decides: whether the reply is JSON that passed the caller's `validate`
 
 What code decides: whether those facts match the source, and whether a fix may run. A failure is not a guess.
 
-The advisory reader in `src/extractors/advisory/` is the Grok-backed piece for the live demo. It is not implemented. The folder README is the contract. `.cursor/skills/writing-extractors/SKILL.md` is the procedure.
+The advisory reader in `src/extractors/advisory/` is the Grok-backed extractor. It is not implemented. The folder README is the contract. `.cursor/skills/writing-extractors/SKILL.md` is the procedure.
 
 ## What a fix is allowed to do
 

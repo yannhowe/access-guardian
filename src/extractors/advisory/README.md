@@ -1,6 +1,6 @@
 # Advisory reader
 
-This folder is empty on purpose. Do not implement the reader in the scaffold. Build it live, in the interview, by following `.cursor/skills/writing-extractors/SKILL.md`.
+This folder is empty on purpose. Do not implement the reader until a brief asks for it. Follow `.cursor/skills/writing-extractors/SKILL.md`.
 
 The reader is the one Grok-backed extractor in this repo. It turns CVE advisory prose into three facts. Advisory prose is free text that code cannot parse. CloudTrail fields are already structured. Do not send those fields to Grok.
 
