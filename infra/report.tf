@@ -85,11 +85,12 @@ resource "aws_lambda_function" "daily" {
   timeout          = 60
   memory_size      = 256
 
+  # SLACK_CHANNEL is the channel id for #platform-security.
   environment {
     variables = {
       XAI_SECRET_ID             = data.aws_secretsmanager_secret.xai.name
       SLACK_BOT_TOKEN_SECRET_ID = aws_secretsmanager_secret.slack_bot_token.name
-      SLACK_CHANNEL             = "platsec-demo"
+      SLACK_CHANNEL             = "C0CDQ5V6RR6"
     }
   }
 

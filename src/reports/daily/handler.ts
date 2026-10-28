@@ -11,7 +11,8 @@
  * the schema, which suspected open ports classifyIngress still calls a
  * finding (classifyIngress applies public=true), which eventIds were in the
  * model input, the principal and resource names on each row, and whether the
- * report is posted.
+ * report is posted. This handler passes XAI_SECRET_ID into extract().
+ * extract() reads the key.
  *
  * extract() sends temperature 0. On timeout, schema mismatch, or any other
  * model error, nothing from the model is posted. Event fields are data.
@@ -251,20 +252,19 @@ export async function handleDailyReport(event: unknown, deps: DailyDeps): Promis
     cap,
   );
 
-  const modelKey = await readSecret(deps.secrets, requiredEnv('XAI_SECRET_ID'));
-  if (!modelKey.ok) {
-    return { ok: false, posted: false, reason: 'secret_failed', message: 'Could not read the model key.' };
+  const secretId = requiredEnv('XAI_SECRET_ID');
+  if (secretId === undefined) {
+    return { ok: false, posted: false, reason: 'secret_failed', message: 'The model secret id is not set.' };
   }
 
-  const extracted = await withModelKey(modelKey.value, () =>
-    extract({
-      system: SYSTEM_PROMPT,
-      input: payload.json,
-      schemaName: 'daily_cloudtrail_report',
-      schema: REPORT_SCHEMA,
-      validate: isGrokReport,
-    }),
-  );
+  const extracted = await extract({
+    system: SYSTEM_PROMPT,
+    input: payload.json,
+    schemaName: 'daily_cloudtrail_report',
+    schema: REPORT_SCHEMA,
+    validate: isGrokReport,
+    secretId,
+  });
 
   if (!extracted.ok) {
     return { ok: false, posted: false, reason: extracted.reason, message: 'The model call failed.' };
@@ -1084,21 +1084,6 @@ async function readSecret(secrets: AwsClient, secretId: string | undefined): Pro
     return { ok: false };
   }
   return { ok: true, value };
-}
-
-async function withModelKey<T>(secretValue: string, run: () => Promise<T>): Promise<T> {
-  const name = 'XAI_' + 'API_KEY';
-  const previous = process.env[name];
-  process.env[name] = secretValue;
-  try {
-    return await run();
-  } finally {
-    if (previous === undefined) {
-      delete process.env[name];
-    } else {
-      process.env[name] = previous;
-    }
-  }
 }
 
 async function postToSlack(
