@@ -8,7 +8,7 @@ This repository is the hard gate in front of a change:
 
 - An allow-list of fixes (`src/fixes/allow-list.ts`).
 - One Lambda per fix, under `src/fixes/<name>/`, with its own IAM role `ag-fix-<name>`.
-- One hardcoded mutating call per fix. The call returns the resource to its recorded intended state. The only case that opens access is `remove-bucket-public-access-block`, and only on the one bucket that carries `public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic`.
+- One hardcoded mutating call per fix. The call returns the resource to its recorded intended state. A fix may open access only when that return is proven both by the public=true tag check in the handler and by the IAM tag condition on the fix role. The only case is `remove-bucket-public-access-block`, on the one bucket that carries `public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic`. Every other fix stays close-only.
 - A guard in `src/guard/` that fails a fix off the list, a wildcard action, a blocked IAM action, a missing Terraform entry, a missing `auto-remediate` check, and any xAI call outside the Grok client.
 - A human yes before `apply` is true, and a human merge before code lands. Merge only when Yann explicitly asks.
 

@@ -4,7 +4,7 @@ Repo code changes go through Cursor cloud agent pull requests. Paste the full ou
 
 Write plain English. Do not use em dashes in docs or code comments.
 
-Synthetic data only. Defensive remediation only. A fix returns a resource to its recorded intended state. The only case where that opens access: a fix may remove Block Public Access on an S3 bucket that carries all three tags public=true, auto-remediate=true, and purpose=ag-demo-synthetic (exact key and value, case-sensitive). The intended state comes only from the public=true tag, never from case or finding text. It does not include exploit payloads or attack steps.
+Synthetic data only. Defensive remediation only. A fix returns a resource to its recorded intended state. A fix may open access only when that return is proven both by the public=true tag check in the handler and by the IAM tag condition on the fix role. The only case is removing Block Public Access on an S3 bucket that carries all three tags public=true, auto-remediate=true, and purpose=ag-demo-synthetic (exact key and value, case-sensitive). The intended state comes only from the public=true tag, never from case or finding text. Every other fix stays close-only. It does not include exploit payloads or attack steps.
 
 A world-open (`0.0.0.0/0` or `::/0`) sensitive port is always a finding. Any other world-open port is a finding unless the security group is tagged `public=true`. 80 and 443 pass only when tagged. The port list is `src/policy/sensitive-ports.ts`. `classifyIngress()` in `src/policy/classify-ingress.ts` applies it.
 

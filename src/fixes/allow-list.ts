@@ -4,12 +4,14 @@
  * Each key is a folder under src/fixes. The guard checks that folder's
  * fix.json and policy.json against this list.
  *
- * A fix returns a resource to its recorded intended state. The only case
- * where that opens access: a fix may remove Block Public Access on an S3
- * bucket that carries all three tags public=true,
- * auto-remediate=true, and purpose=ag-demo-synthetic (exact key and value,
- * case-sensitive). The intended state comes only from the public=true
- * tag, never from case or finding text.
+ * A fix returns a resource to its recorded intended state. A fix may open
+ * access only when that return is proven both by the public=true
+ * tag check in the handler and by the IAM tag condition on the fix role.
+ * The only case is removing Block Public Access on an S3 bucket that
+ * carries all three tags public=true, auto-remediate=true, and
+ * purpose=ag-demo-synthetic (exact key and value, case-sensitive). The
+ * intended state comes only from the public=true tag, never from
+ * case or finding text. Every other fix stays close-only.
  *
  * Does not belong: deleting resources, rotating credentials, stopping
  * instances, or anything that touches more than one resource. The fix does

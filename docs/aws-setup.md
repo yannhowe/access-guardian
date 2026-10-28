@@ -28,7 +28,7 @@ It may allow:
 - `ec2:DescribeSecurityGroupRules` and `ec2:DescribeSecurityGroups`
 - `ec2:RevokeSecurityGroupIngress` on security groups
 - `s3:GetBucketTagging` and `s3:GetBucketPublicAccessBlock`
-- `s3:PutBucketPublicAccessBlock` for the bucket public access block fixes. AWS authorizes `DeletePublicAccessBlock` with this same action. The only fix that may remove the block is the one for a bucket tagged `public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic`
+- `s3:PutBucketPublicAccessBlock` for the bucket public access block fixes. AWS authorizes `DeletePublicAccessBlock` with this same action. A fix may open access only when it returns a resource to its intended state, proven both by the public=true tag check in the handler and by the IAM tag condition on the fix role. The only fix that may remove the block is the one for a bucket tagged `public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic`. Every other fix stays close-only.
 - `logs:CreateLogStream` and `logs:PutLogEvents` on `/aws/lambda/ag-fix-*`
 
 It must not allow `Authorize*`, `Delete*PublicAccessBlock`, `iam:*`, or `Put*Policy`. The remove fix still uses IAM action `s3:PutBucketPublicAccessBlock`. The boundary does not gain `s3:DeleteBucketPublicAccessBlock`.
