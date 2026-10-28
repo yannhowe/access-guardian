@@ -6,6 +6,32 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
+# Zip stores the file's modification time, and Terraform hashes the whole zip.
+# A clock time of "now" plans a Lambda update on every run even when the
+# source did not change. These seconds are the ones already on the deployed
+# zips. A real source change still changes the hash. A new fix uses the epoch
+# so its first build is already stable.
+# The zip also records the user id of the account that runs zip. Plan and
+# apply both run as the GitHub Actions runner, so those two hashes match.
+export TZ=UTC
+
+zip_stamp() {
+  case "$1" in
+    close-open-port | contain-iam-user)
+      printf '%s\n' '2026-10-28 19:04:48 UTC'
+      ;;
+    remove-bucket-public-access-block | restore-bucket-public-access-block)
+      printf '%s\n' '2026-10-28 19:04:49 UTC'
+      ;;
+    daily)
+      printf '%s\n' '2026-10-28 19:04:50 UTC'
+      ;;
+    *)
+      printf '%s\n' '1980-01-01 00:00:00 UTC'
+      ;;
+  esac
+}
+
 found=0
 for handler in src/fixes/*/handler.ts; do
   if [[ ! -f "$handler" ]]; then
@@ -21,6 +47,7 @@ for handler in src/fixes/*/handler.ts; do
     --target=node20 \
     --format=cjs \
     --outfile="${out}/index.js"
+  touch -d "$(zip_stamp "$name")" "${out}/index.js"
   rm -f "dist/fixes/${name}.zip"
   (
     cd "$out"
@@ -50,6 +77,7 @@ npx esbuild "$report_handler" \
   --target=node20 \
   --format=cjs \
   --outfile="${out}/index.js"
+touch -d "$(zip_stamp daily)" "${out}/index.js"
 rm -f "dist/reports/daily.zip"
 (
   cd "$out"
