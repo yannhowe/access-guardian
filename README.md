@@ -10,11 +10,14 @@ The bots, Slack, and Notion are not in this repository. Those parts are describe
 flowchart TD
   subgraph intakeBox [Intake]
     cloudtrail[CloudTrail]
-    sgRule["Rule ag-cloudtrail-sg-ingress-to-lead"]
+    sgRule["ag-cloudtrail-sg-ingress-to-lead"]
+    s3Rule["ag-cloudtrail-s3-public-access-to-lead"]
     apiDest["API destination ag-lead-webhook"]
     slack["Slack platsec-demo"]
     cloudtrail --> sgRule
+    cloudtrail --> s3Rule
     sgRule --> apiDest
+    s3Rule --> apiDest
   end
 
   subgraph botsBox [Bots]
@@ -76,15 +79,19 @@ flowchart TD
   guardLabel --> removeFn
 ```
 
-`ag-reader` is drawn with the run path because that is the described read-only role. This repository does not say which bot assumes it.
+`ag-cloudtrail-sg-ingress-to-lead` matches successful `AuthorizeSecurityGroupIngress` only. `ag-cloudtrail-s3-public-access-to-lead`, `ag-bot-invoker`, and `ag-reader` are created outside Terraform (manual). This repository does not say which bot assumes `ag-reader`.
 
 ### Intake
 
-CloudTrail sends events through an EventBridge rule to an API destination. The destination POSTs to AG Lead's webhook routine. There is no Lambda on that path, and there is no Terraform for it. The pieces were created by hand. See [docs/intake.md](docs/intake.md).
+CloudTrail sends events through EventBridge rules to an API destination. The destination POSTs to AG Lead's webhook routine. There is no Lambda on that path. See [docs/intake.md](docs/intake.md).
 
-The rule in this repository is `ag-cloudtrail-sg-ingress-to-lead` on the default bus. It matches successful `AuthorizeSecurityGroupIngress` events. A failed call and a dry run set `errorCode`, and those events are left out. The connection and the API destination are both named `ag-lead-webhook`. The rule target uses role `ag-eventbridge-to-ag-lead`, which may call `events:InvokeApiDestination` on that destination. The target retries 3 times within 1 hour. The input transformer sends the fields listed in [docs/intake.md](docs/intake.md), each as a string. `source` is the constant `aws-cloudtrail`.
+`ag-cloudtrail-sg-ingress-to-lead` is on the default bus. It matches successful `AuthorizeSecurityGroupIngress` events. A failed call and a dry run set `errorCode`, and those events are left out. The connection and the API destination are both named `ag-lead-webhook`. The rule target uses role `ag-eventbridge-to-ag-lead`, which may call `events:InvokeApiDestination` on that destination. The target retries 3 times within 1 hour. The input transformer sends the fields listed in [docs/intake.md](docs/intake.md), each as a string. `source` is the constant `aws-cloudtrail`. That rule was created by hand.
+
+`ag-cloudtrail-s3-public-access-to-lead` is created outside Terraform (manual). Its event pattern is not written in this repository.
 
 Slack channel `platsec-demo` also reaches AG Lead, and only when the message tags `@AG-lead`. No Slack code lives here.
+
+TODO: move `ag-reader`, `ag-bot-invoker`, and `ag-cloudtrail-s3-public-access-to-lead` into `infra/`.
 
 ### Bots
 
@@ -107,11 +114,11 @@ The one-time bootstrap (OIDC, plan role, apply role, boundary, state backend) is
 
 ### Running a fix
 
-AG Lead assumes `ag-bot-invoker` and invokes the fix Lambda. That role's described permission is `lambda:InvokeFunction` on `ag-fix-*`. [docs/aws-setup.md](docs/aws-setup.md) states the same permission and does not name the role. This repository does not create `ag-bot-invoker` or `ag-reader`. `ag-reader` is the described role for read-only checks.
+AG Lead assumes `ag-bot-invoker` and invokes the fix Lambda. That role is created outside Terraform (manual). Its permission is `lambda:InvokeFunction` on `ag-fix-*`. `ag-reader` handles read-only checks and is created outside Terraform (manual).
 
 The handler defaults to a dry run. `apply` is omitted or set to `false` on the first invoke. Boolean `true` is the only value that writes, and Lead sets it only after Yann's yes. A second run that finds the desired state returns `changed: false`.
 
-Each fix Lambda has its own role, `ag-fix-<name>`. The tag conditions on those roles are not the same. See the table below.
+Each fix Lambda has its own role, `ag-fix-<name>`. The IAM tag conditions are in the next section.
 
 ## Fixes on main
 
@@ -133,11 +140,18 @@ Success reasons:
 
 A fix calls Grok only when `fix.json` says `callsGrok` is true. All three say `false`. The only xAI call in this repository is `extract()` in [src/grok/client.ts](src/grok/client.ts). Temperature is 0, the timeout is 15 seconds, and a failure is `no_key`, `timeout`, `http_error`, `bad_json`, or `schema_mismatch`. The advisory reader in [src/extractors/advisory/](src/extractors/advisory/) uses that call for free text, then code checks the facts and compares them with [inventory/services.json](inventory/services.json). CloudTrail intake is structured. That path does not call Grok.
 
+## IAM tag conditions
+
+Taken from each `policy.json` and handler.
+
+- **`ag-fix-close-open-port`.** The revoke statement allows `ec2:RevokeSecurityGroupIngress` on `arn:aws:ec2:*:*:security-group/*` only when both `aws:ResourceTag/auto-remediate` is `true` and `aws:ResourceTag/purpose` is `ag-demo-synthetic`. The two read actions have no tag condition and use `Resource` `*`. The handler checks `auto-remediate=true` before a revoke, including a dry run that would revoke. The handler does not check `purpose`.
+- **`ag-fix-restore-bucket-public-access-block`.** Both statements use `arn:aws:s3:::ag-demo-*`. Neither statement has a tag condition. The handler requires `purpose=ag-demo-synthetic` and `auto-remediate=true`. It refuses a bucket that has `intended-public=true` and leaves that bucket unchanged.
+- **`ag-fix-remove-bucket-public-access-block`.** Both statements use `arn:aws:s3:::ag-demo-public-10281729`. The mutating statement requires `aws:ResourceTag/intended-public` to be `true`. The read statement has no tag condition. The handler requires `intended-public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic` before the delete. It does not read case text. The intended state comes from `intended-public=true`.
+
+`src/guard/audit.ts` requires every allow-listed handler to declare `auto-remediate` and to call `hasAutoRemediateTag` before its mutating send. The two bucket handlers must also check `intended-public` before that send: present for the remove fix, absent for the restore fix.
+
 ## Guardrails
 
-- **`auto-remediate=true`.** Every allow-listed handler declares that tag and calls `hasAutoRemediateTag` before its mutating send. A dry run that would change the resource still requires the tag. `src/guard/audit.ts` fails a handler that skips the check.
-- **`purpose=ag-demo-synthetic`.** On `close-open-port`, IAM requires this tag and `auto-remediate=true` together, on `arn:aws:ec2:*:*:security-group/*`. The handler checks `auto-remediate` in code. On the two bucket fixes, the handler checks `purpose` in code. Their IAM policies do not set a `purpose` condition.
-- **`intended-public=true`.** The remove fix requires this tag, plus `auto-remediate=true` and `purpose=ag-demo-synthetic`, exact and case-sensitive. The intended state comes from that tag. The handler does not read case text. IAM on the remove role adds `aws:ResourceTag/intended-public` = `true` on the mutating statement, and the resource is `arn:aws:s3:::ag-demo-public-10281729`. The restore fix refuses a bucket that has `intended-public=true` and leaves it unchanged. The guard requires that absence check before the restore put.
 - **Allow-list and `src/guard` audit.** A fix folder needs `handler.ts`, `policy.json`, `fix.json`, a test, an allow-list entry, a registry row, and a `fix_names` entry. One mutating action, no wildcards, and that action must be on the close-only list in `src/guard/mutating-apis.ts` (`ec2:RevokeSecurityGroupIngress`, `s3:PutBucketPublicAccessBlock`). The guard blocks `Authorize*`, IAM action names matching `Delete*PublicAccessBlock`, `iam:*`, and `Put*Policy`. `DeletePublicAccessBlockCommand` is allowed only in `src/fixes/remove-bucket-public-access-block/handler.ts`, and only when the three tag checks come before the send. The command is not renamed. Shell, `eval`, and a dynamic import are forbidden in `src/`. An xAI call outside the Grok client fails the guard.
 - **`guard-change` label.** [scripts/check-protected-paths.mjs](scripts/check-protected-paths.mjs) fails a pull request that edits a protected path unless that label is present. Protected paths match [.github/CODEOWNERS](.github/CODEOWNERS): `src/guard/`, `tests/guard*`, `infra/modules/`, `.github/`, `src/fixes/allow-list.ts`, and `.cursor/`. Yann adds the label. An agent does not.
 

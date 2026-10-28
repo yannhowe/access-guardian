@@ -52,7 +52,7 @@ The workflows pass those through `-backend-config`.
 
 The Grok Bot teammates invoke a fix. They do not deploy it. Give them `lambda:InvokeFunction` on `ag-fix-*` only. They do not get `ec2:*`, `iam:*`, or permission to change the function.
 
-AG Lead's invoke role is described as `ag-bot-invoker`. Read-only checks are described as role `ag-reader`. This repository does not create either role, and Terraform does not name them.
+`ag-bot-invoker` is created outside Terraform (manual). AG Lead assumes it. Its permission is `lambda:InvokeFunction` on `ag-fix-*`. `ag-reader` handles read-only checks and is created outside Terraform (manual). TODO: move both roles into `infra/`.
 
 A dry run omits `apply` or sets it to false. After Yann's yes, the bot invokes the same function with `apply` set to true.
 

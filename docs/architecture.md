@@ -18,7 +18,7 @@ Dry-run is the default. The Lambda changes AWS only when the event has `apply` s
 
 Two triggers, both outside this repository.
 
-1. CloudTrail. EventBridge rule `ag-cloudtrail-sg-ingress-to-lead` matches a successful `AuthorizeSecurityGroupIngress` and API destination `ag-lead-webhook` POSTs a short JSON body to the AG Lead routine webhook. That path has no Lambda. The pieces are listed in [intake.md](intake.md). They were created by hand with the AWS CLI. This repository does not document a second intake rule.
+1. CloudTrail. EventBridge rule `ag-cloudtrail-sg-ingress-to-lead` matches successful `AuthorizeSecurityGroupIngress` only. API destination `ag-lead-webhook` POSTs a short JSON body to the AG Lead routine webhook. That path has no Lambda. The pieces are listed in [intake.md](intake.md). A second rule, `ag-cloudtrail-s3-public-access-to-lead`, is created outside Terraform (manual). Its event pattern is not written in this repository. TODO: move that rule into `infra/`.
 2. Slack. A channel listener on `platsec-demo`, and only for a message that tags `@AG-lead`. No Slack code lives here.
 
 The CloudTrail body is structured, so the bot reads it in code. Grok is not used to parse it. Slack text is free text. Grok is called only when code cannot parse that text, and only through the one client.
@@ -39,15 +39,15 @@ Each fix is a folder `src/fixes/<name>/` with `handler.ts`, `policy.json`, and `
 
 `main` has three fixes. See the table in the [README](../README.md).
 
-- `close-open-port` checks a security group id, a protocol (`tcp` or `udp`), one port, and one IPv4 CIDR. It reads the rules. When a matching ingress rule is still there, it requires tag `auto-remediate=true` and revokes that rule only when `apply` is true. IAM also requires `purpose=ag-demo-synthetic` on the revoke. If the rule is already gone, the result is `changed: false` and `reason` `already_closed`. The undo on the allow-list is to authorize that same rule again. The fix does not perform the undo.
-- `restore-bucket-public-access-block` accepts one bucket name that starts with `ag-demo-`. It refuses `intended-public=true`. It requires `purpose=ag-demo-synthetic` and `auto-remediate=true` in the handler. IAM scopes the role to `arn:aws:s3:::ag-demo-*` and does not add a tag condition. The put sets all four Block Public Access flags to true. An already blocked bucket returns `already_blocked`.
-- `remove-bucket-public-access-block` accepts only bucket `ag-demo-public-10281729`. The handler requires `intended-public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic` before it sends `DeletePublicAccessBlockCommand`. The IAM action is `s3:PutBucketPublicAccessBlock`, which is how AWS authorizes that API. The policy resource is that one bucket, and the mutating statement requires `aws:ResourceTag/intended-public` = `true`. If the block is already absent, the result is `already_absent`.
+- `close-open-port` checks a security group id, a protocol (`tcp` or `udp`), one port, and one IPv4 CIDR. It reads the rules. When a matching ingress rule is still there, the handler requires `auto-remediate=true` and revokes that rule only when `apply` is true. The handler does not check `purpose`. IAM on the revoke statement requires both `auto-remediate=true` and `purpose=ag-demo-synthetic` on `arn:aws:ec2:*:*:security-group/*`. The reads have no tag condition. If the rule is already gone, the result is `changed: false` and `reason` `already_closed`. The undo on the allow-list is to authorize that same rule again. The fix does not perform the undo.
+- `restore-bucket-public-access-block` accepts one bucket name that starts with `ag-demo-`. The handler requires `purpose=ag-demo-synthetic` and `auto-remediate=true`, and it refuses `intended-public=true`. IAM scopes both statements to `arn:aws:s3:::ag-demo-*` and has no tag condition. The put sets all four Block Public Access flags to true. An already blocked bucket returns `already_blocked`.
+- `remove-bucket-public-access-block` accepts only bucket `ag-demo-public-10281729`. The handler requires `intended-public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic` before it sends `DeletePublicAccessBlockCommand`. The IAM action is `s3:PutBucketPublicAccessBlock`, which is how AWS authorizes that API. Both policy statements use that one bucket ARN. The mutating statement requires `aws:ResourceTag/intended-public` = `true`. The read statement has no tag condition. If the block is already absent, the result is `already_absent`.
 
 A key that is not on the allow-list is not something Builder may automate. A human handles it.
 
 ## How a bot runs a fix
 
-AG Lead assumes `ag-bot-invoker` and invokes the Lambda. It does not call EC2 or S3 itself. `ag-reader` is the described role for read-only checks. Neither role is created by the Terraform in `infra/`. Region `ap-southeast-1`.
+AG Lead assumes `ag-bot-invoker` and invokes the Lambda. That role is created outside Terraform (manual). Its permission is `lambda:InvokeFunction` on `ag-fix-*`. `ag-reader` handles read-only checks and is created outside Terraform (manual). TODO: move both roles into `infra/`. Region `ap-southeast-1`.
 
 Dry run first. Leave `apply` out, or set it to false:
 

@@ -8,7 +8,7 @@ The webhook URL and the API key are not in this repo. The key is held only in th
 
 EventBridge rule `ag-cloudtrail-sg-ingress-to-lead` on the default bus.
 
-It matches successful `AuthorizeSecurityGroupIngress` CloudTrail events. A failed call and a dry-run set `errorCode`, and those events are left out. This file does not document a second rule.
+It matches successful `AuthorizeSecurityGroupIngress` CloudTrail events only. A failed call and a dry-run set `errorCode`, and those events are left out.
 
 ## Connection
 
@@ -48,6 +48,12 @@ Every value below is sent as a string. `protocol`, `fromPort`, `toPort`, and `ci
 | source | constant `aws-cloudtrail` |
 
 A call that adds two rules, or only an IPv6 range, does not fill `cidr` from these paths. EventBridge then has nothing complete to POST. That delivery does not become a half-parsed case.
+
+## Second rule
+
+EventBridge rule `ag-cloudtrail-s3-public-access-to-lead` is created outside Terraform (manual). Its event pattern is not written in this repository.
+
+TODO: move `ag-cloudtrail-s3-public-access-to-lead` into `infra/`.
 
 ## Not part of this repo
 

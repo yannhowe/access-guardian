@@ -6,7 +6,7 @@ Use synthetic data only. A safe group id is `sg-demo0001`. A safe account id in 
 
 ## Two ways a case reaches AG Lead
 
-1. CloudTrail. Someone calls `AuthorizeSecurityGroupIngress`. The EventBridge rule in `docs/intake.md` matches it. The API destination POSTs the structured body to the AG Lead routine webhook. No Lambda, and no code in this repo. The bot reads `eventName`, `eventTime`, `account`, `region`, `actorArn`, `sourceIp`, `groupId`, `protocol`, `fromPort`, `toPort`, `cidr`, `requestId`, `eventId`, and `source` in code. That path does not call Grok.
+1. CloudTrail. Someone calls `AuthorizeSecurityGroupIngress`. Rule `ag-cloudtrail-sg-ingress-to-lead` matches that successful call only. The API destination POSTs the structured body to the AG Lead routine webhook. No Lambda, and no code in this repo. The bot reads `eventName`, `eventTime`, `account`, `region`, `actorArn`, `sourceIp`, `groupId`, `protocol`, `fromPort`, `toPort`, `cidr`, `requestId`, `eventId`, and `source` in code. That path does not call Grok. Rule `ag-cloudtrail-s3-public-access-to-lead` is created outside Terraform (manual). Its event pattern is not written in this repo. TODO: move that rule into `infra/`.
 2. Slack. A person writes in `#platsec-demo` and tags `@AG-lead`. The Grok Bot channel listener receives that mention. No Slack code lives here. Yann (Slack `U0CAKUDP3L0`) is the only person whose messages count as approvals. If the message is free text that code cannot parse, Lead may extract facts. If the listener already has structured fields, it does not call Grok.
 
 A sample webhook body, all synthetic:
@@ -41,7 +41,7 @@ If `fromPort` and `toPort` are the same single port, the starter fix can plan a 
 3. AG Change picks an allow-listed fix or proposes a build. One finding, one resource. A wildcard request is too broad. If the key is already registered, Change reuses it. If the key is allowed but not built, Change asks Builder to write it. If the key is not on the list, a human handles it. Change does not call Grok and does not run the fix.
 4. AG Builder, a Cursor cloud agent, opens a pull request when a new fix is needed. A new fix follows `.cursor/skills/writing-remediators/SKILL.md`. The advisory reader follows `.cursor/skills/writing-extractors/SKILL.md`. The guard test must pass. Builder does not merge.
 5. Yann reviews and merges. That merge is the gate for code. A merge to `main` runs `.github/workflows/terraform-apply.yml`.
-6. AG Lead shows Yann the plan: the Lambda for that fix, the one IAM action, and the dry-run result (`changed: false`). Lead assumes `ag-bot-invoker` for the invoke. Lead does not set `apply` until Yann says yes. Without the yes, the invoke stays a dry run.
+6. AG Lead shows Yann the plan: the Lambda for that fix, the one IAM action, and the dry-run result (`changed: false`). Lead assumes `ag-bot-invoker` for the invoke. That role is created outside Terraform (manual), with `lambda:InvokeFunction` on `ag-fix-*`. `ag-reader` handles read-only checks and is created outside Terraform (manual). TODO: move both roles into `infra/`. Lead does not set `apply` until Yann says yes. Without the yes, the invoke stays a dry run.
 
 ## Every Grok call
 
@@ -60,9 +60,9 @@ The client reads `XAI_API_KEY` from the environment. `XAI_MODEL` overrides the d
 ## What to show in the code
 
 - `src/fixes/allow-list.ts`: one entry per fix, one action, one undo line. The fix does not perform the undo.
-- `src/fixes/close-open-port/`: revoke one ingress rule. Dry-run unless `apply` is true. IAM requires `purpose=ag-demo-synthetic` and `auto-remediate=true`.
-- `src/fixes/restore-bucket-public-access-block/`: turn the four Block Public Access flags on. The handler refuses `intended-public=true`.
-- `src/fixes/remove-bucket-public-access-block/`: remove the block on `ag-demo-public-10281729` only, after the three exact tags. The SDK command is `DeletePublicAccessBlockCommand`. The IAM action is `s3:PutBucketPublicAccessBlock`.
+- `src/fixes/close-open-port/`: revoke one ingress rule. Dry-run unless `apply` is true. IAM on the revoke requires `auto-remediate=true` and `purpose=ag-demo-synthetic`. The handler checks `auto-remediate=true` and does not check `purpose`.
+- `src/fixes/restore-bucket-public-access-block/`: turn the four Block Public Access flags on. IAM has no tag condition and is scoped to `arn:aws:s3:::ag-demo-*`. The handler requires `purpose=ag-demo-synthetic` and `auto-remediate=true`, and it refuses `intended-public=true`.
+- `src/fixes/remove-bucket-public-access-block/`: remove the block on `ag-demo-public-10281729` only. IAM requires `intended-public=true` on that bucket for the mutating action. The handler also requires `auto-remediate=true` and `purpose=ag-demo-synthetic`. The SDK command is `DeletePublicAccessBlockCommand`. The IAM action is `s3:PutBucketPublicAccessBlock`.
 - `infra/main.tf`: one Terraform name per fix. The module always sets the permissions boundary.
 - `tests/fixes/`: a fake AWS client per fix. Default is dry-run. One mutating call when apply is set. Bad input does not call AWS.
 - `tests/guard.test.ts`: the tree passes, and a fix off the list, a second mutating action, or an xAI call outside the client fails.
