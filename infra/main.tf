@@ -6,6 +6,7 @@ locals {
   fix_names = toset([
     "close-open-port",
     "restore-bucket-public-access-block",
+    "remove-bucket-public-access-block",
   ])
 }
 

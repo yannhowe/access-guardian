@@ -6,7 +6,7 @@ This repo is the hard gate in front of a change:
 
 - An allow-list of fixes (`src/fixes/allow-list.ts`).
 - One Lambda per fix, under `src/fixes/<name>/`, with its own IAM role `ag-fix-<name>`.
-- One hardcoded close action per fix. The starter, `close-open-port`, revokes one ingress rule.
+- One hardcoded action per fix. The starter, `close-open-port`, revokes one ingress rule.
 - A guard test that fails a fix off the list, a policy that opens or deletes, a wildcard action, or an xAI call outside the Grok client.
 - A human yes before a real AWS call, and a human merge before code lands. Merge only when Yann explicitly asks.
 
@@ -34,6 +34,8 @@ The advisory reader in `src/extractors/advisory/` is the Grok-backed extractor. 
 ## What a fix is allowed to do
 
 Each fix is a folder `src/fixes/<name>/` with `handler.ts`, `policy.json`, and `fix.json`. Terraform in `infra/` creates one role and one function, both named `ag-fix-<name>`. The role's permissions boundary is `ag-fix-boundary`. The inline policy is that folder's `policy.json`. A new fix is the folder plus one name in `local.fix_names`.
+
+A fix returns a resource to its recorded intended state. The only case where that opens access: a fix may remove Block Public Access on an S3 bucket that carries all three tags intended-public=true, auto-remediate=true, and purpose=ag-demo-synthetic (exact key and value, case-sensitive). The intended state comes only from the intended-public=true tag, never from case or finding text.
 
 `close-open-port` checks a security group id, a protocol (`tcp` or `udp`), one port, and one IPv4 CIDR. It reads the rules, and it revokes that one ingress rule only when `apply` is true and the rule is still there. If the rule is already gone, the result is `changed: false`. The undo is on the allow-list (authorize that same rule again). The fix does not perform the undo.
 

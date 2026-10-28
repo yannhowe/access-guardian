@@ -10,12 +10,13 @@
  * The read alias is the same kind of rename for GetPublicAccessBlockCommand.
  *
  * apply defaults to false. Only a boolean true writes. This file does not
- * call Grok. It does not remove the block, and it does not change account
- * settings.
+ * call Grok. It does not remove the block, it does not change a bucket
+ * tagged intended-public=true, and it does not change account settings.
  *
  * What Grok decides: nothing.
  * What code decides: whether the bucket name is valid, whether the bucket
- * is tagged purpose=ag-demo-synthetic, whether the bucket has tag
+ * is tagged intended-public=true (those buckets are left unchanged), whether
+ * the bucket is tagged purpose=ag-demo-synthetic, whether the bucket has tag
  * auto-remediate set to true, whether all four Block Public Access flags
  * are already true, and whether the one put is sent.
  *
@@ -43,10 +44,21 @@ const MISSING_TAGS = 'NoSuchTagSet';
 const MISSING_BLOCK = 'NoSuchPublicAccessBlockConfiguration';
 const AUTO_REMEDIATE_TAG_KEY = 'auto-remediate';
 const AUTO_REMEDIATE_TAG_VALUE = 'true';
+const INTENDED_PUBLIC_TAG_KEY = 'intended-public';
+const INTENDED_PUBLIC_TAG_VALUE = 'true';
 
 function hasAutoRemediateTag(tags: readonly { Key?: unknown; Value?: unknown }[]): boolean {
   for (const tag of tags) {
     if (tag.Key === AUTO_REMEDIATE_TAG_KEY && tag.Value === AUTO_REMEDIATE_TAG_VALUE) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasIntendedPublicTag(tags: readonly { Key?: unknown; Value?: unknown }[]): boolean {
+  for (const tag of tags) {
+    if (tag.Key === INTENDED_PUBLIC_TAG_KEY && tag.Value === INTENDED_PUBLIC_TAG_VALUE) {
       return true;
     }
   }
@@ -100,7 +112,8 @@ export async function handler(event: unknown): Promise<FixResult> {
 }
 
 /**
- * Validate the event, require the demo tag, and put the four true flags
+ * Validate the event, skip a bucket tagged intended-public=true, require
+ * the demo tag and the auto-remediate tag, and put the four true flags
  * only when apply is true and the bucket is not already blocked.
  */
 export async function handleRestoreBucketPublicAccessBlock(
@@ -116,6 +129,26 @@ export async function handleRestoreBucketPublicAccessBlock(
   const tagged = await bucketIsTagged(client, input.bucket);
   if (!tagged.ok) {
     return tagged.failure;
+  }
+  if (hasIntendedPublicTag(tagged.tags)) {
+    return {
+      ok: false,
+      changed: false,
+      errorCode: 'IntendedPublicBucket',
+      errorMessage: 'bucket tagged intended-public=true is left unchanged',
+    };
+  }
+  const purpose = readPurposeValue(tagged.tags);
+  if (purpose === 'bad') {
+    return {
+      ok: false,
+      changed: false,
+      errorCode: 'InvalidResponse',
+      errorMessage: 'GetBucketTagging did not return a tag set',
+    };
+  }
+  if (purpose !== PURPOSE) {
+    return notTagged();
   }
   if (!hasAutoRemediateTag(tagged.tags)) {
     return {
@@ -213,21 +246,6 @@ async function bucketIsTagged(
     return { ok: false, failure: { ok: false, changed: false, ...readAwsError(err) } };
   }
 
-  const purpose = readPurpose(described);
-  if (purpose === 'bad') {
-    return {
-      ok: false,
-      failure: {
-        ok: false,
-        changed: false,
-        errorCode: 'InvalidResponse',
-        errorMessage: 'GetBucketTagging did not return a tag set',
-      },
-    };
-  }
-  if (purpose !== PURPOSE) {
-    return { ok: false, failure: notTagged() };
-  }
   const tags = readTagRecords(described);
   if (tags === 'bad') {
     return {
@@ -276,26 +294,11 @@ function notTagged(): Failure {
 
 /**
  * The purpose tag value, when there is exactly one. undefined means the key
- * is absent. 'bad' means the payload cannot be trusted.
+ * is absent. 'bad' means the key is repeated.
  */
-function readPurpose(payload: unknown): string | undefined | 'bad' {
-  if (typeof payload !== 'object' || payload === null) {
-    return 'bad';
-  }
-  const tagSet = (payload as { TagSet?: unknown }).TagSet;
-  if (!Array.isArray(tagSet)) {
-    return 'bad';
-  }
-
+function readPurposeValue(tags: readonly { Key: string; Value: string }[]): string | undefined | 'bad' {
   let purpose: string | undefined;
-  for (const item of tagSet) {
-    if (typeof item !== 'object' || item === null) {
-      return 'bad';
-    }
-    const tag = item as { Key?: unknown; Value?: unknown };
-    if (typeof tag.Key !== 'string' || typeof tag.Value !== 'string') {
-      return 'bad';
-    }
+  for (const tag of tags) {
     if (tag.Key !== 'purpose') {
       continue;
     }
