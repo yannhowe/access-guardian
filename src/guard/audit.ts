@@ -20,7 +20,8 @@
  * case-sensitive. An import or assignment that renames either command
  * fails. IAM action names DeletePublicAccessBlock and
  * DeleteBucketPublicAccessBlock stay blocked in every policy. The
- * authorizing action remains s3:PutBucketPublicAccessBlock.
+ * policy-vs-command check maps DeletePublicAccessBlockCommand to
+ * s3:PutBucketPublicAccessBlock, the action AWS authorizes for that API.
  *
  * The xAI endpoint and the key and model env names may appear only in the
  * Grok client and its unit test.
@@ -714,7 +715,13 @@ function isBlocked(action: string): boolean {
 const DELETE_PUBLIC_ACCESS_BLOCK_COMMAND = 'DeletePublicAccessBlockCommand';
 const DELETE_BUCKET_PUBLIC_ACCESS_BLOCK_COMMAND = 'DeleteBucketPublicAccessBlockCommand';
 const REMOVE_BUCKET_PUBLIC_ACCESS_BLOCK_HANDLER = 'src/fixes/remove-bucket-public-access-block/handler.ts';
-const DELETE_PUBLIC_ACCESS_BLOCK_IAM_ACTION = 's3:PutBucketPublicAccessBlock';
+
+// AWS authorizes bucket DeletePublicAccessBlock under s3:PutBucketPublicAccessBlock.
+// The policy-vs-command check uses this map. The import keeps its real name.
+const DELETE_COMMAND_TO_IAM_ACTION: Readonly<Record<string, string>> = {
+  DeletePublicAccessBlockCommand: 's3:PutBucketPublicAccessBlock',
+  DeleteBucketPublicAccessBlockCommand: 's3:PutBucketPublicAccessBlock',
+};
 
 const DELETE_COMMAND_USE =
   /new\s+(?:[A-Za-z_$][\w$]*\s*\.\s*)?(Delete(?:Bucket)?PublicAccessBlockCommand)\b/g;
@@ -750,20 +757,12 @@ const DELETE_TAG_GATES: readonly DeleteTagGate[] = [
   },
 ];
 
-function isDeletePublicAccessBlockCommand(command: string): boolean {
-  const full = `${command}Command`;
-  return full === DELETE_PUBLIC_ACCESS_BLOCK_COMMAND || full === DELETE_BUCKET_PUBLIC_ACCESS_BLOCK_COMMAND;
-}
-
 function actionCoversCommand(action: string, command: string, fix: FixFolder): boolean {
   if (actionName(action) === command) {
     return true;
   }
-  return (
-    action === DELETE_PUBLIC_ACCESS_BLOCK_IAM_ACTION &&
-    isDeletePublicAccessBlockCommand(command) &&
-    deleteExceptionApplies(fix)
-  );
+  const mapped = DELETE_COMMAND_TO_IAM_ACTION[`${command}Command`];
+  return mapped === action && deleteExceptionApplies(fix);
 }
 
 function deleteExceptionApplies(fix: FixFolder): boolean {

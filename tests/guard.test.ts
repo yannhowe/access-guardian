@@ -539,6 +539,44 @@ describe('guard', () => {
     ).toEqual([]);
   });
 
+  it('maps DeletePublicAccessBlockCommand to s3:PutBucketPublicAccessBlock', () => {
+    const covered = audit({
+      ...repoInput(),
+      terraform: undefined,
+      fixes: [
+        folder({
+          name: 'remove-bucket-public-access-block',
+          handlerText: removeDeleteHandler(),
+          policyText: REMOVE_DELETE_POLICY,
+          metadataText: removeMetadata('remove-bucket-public-access-block'),
+        }),
+      ],
+    });
+    const coveredMessages = covered.map((failure) => failure.message);
+    expect(coveredMessages.some((message) => message.includes('does not list'))).toBe(false);
+    expect(coveredMessages.some((message) => message.includes('does not call'))).toBe(false);
+
+    const readsOnly = policy([
+      { action: 's3:GetBucketTagging', resource: 'arn:aws:s3:::ag-demo-public-10281729' },
+      { action: 's3:GetBucketPublicAccessBlock', resource: 'arn:aws:s3:::ag-demo-public-10281729' },
+    ]);
+    const uncovered = audit({
+      ...repoInput(),
+      terraform: undefined,
+      fixes: [
+        folder({
+          name: 'remove-bucket-public-access-block',
+          handlerText: removeDeleteHandler(),
+          policyText: readsOnly,
+          metadataText: removeMetadata('remove-bucket-public-access-block'),
+        }),
+      ],
+    });
+    expect(uncovered.map((failure) => failure.message)).toContain(
+      'handler calls DeletePublicAccessBlock which policy.json does not list',
+    );
+  });
+
   it.each(['close-open-port', 'restore-bucket-public-access-block'])(
     'fails when %s calls DeletePublicAccessBlockCommand',
     (name) => {
