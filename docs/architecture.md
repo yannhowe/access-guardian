@@ -31,8 +31,6 @@ What Grok decides: whether the reply is JSON that passed the caller's `validate`
 
 What code decides: whether those facts match the source, and whether a fix may run. A failure is not a guess.
 
-The advisory reader in `src/extractors/advisory/` is the Grok-backed extractor. The folder README is the contract. `.cursor/skills/writing-extractors/SKILL.md` is the procedure. Grok returns the package, the functions, the ranges, the fixed version, and any workaround. Code checks those facts against the prose and the trusted alert, then compares the ranges with `inventory/services.json`. Tests live in `tests/extractors/advisory.test.ts`.
-
 ## What a fix is allowed to do
 
 Each fix is a folder `src/fixes/<name>/` with `handler.ts`, `policy.json`, and `fix.json`. Terraform in `infra/` creates one role and one function, both named `ag-fix-<name>`. The role's permissions boundary is `ag-fix-boundary`. The inline policy is that folder's `policy.json`. A new fix is the folder plus one name in `local.fix_names`.

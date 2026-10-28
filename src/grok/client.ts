@@ -1,8 +1,8 @@
 /**
- * The only xAI call in this repo.
+ * Every xAI call in this repo goes through this file.
  *
- * What Grok decides: nothing about the case. This function returns JSON that
- * passed `validate`, or a typed failure.
+ * `extract()` returns JSON that passed `validate`, or a typed failure.
+ * What Grok decides: the JSON object when `validate` returns true.
  * What code decides: whether those facts are usable, and whether any fix runs.
  * On a failure, do not fill in a value. Do not act on the call.
  *

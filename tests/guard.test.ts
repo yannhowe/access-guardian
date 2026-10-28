@@ -627,10 +627,10 @@ describe('guard', () => {
     const endpoint = markers()[0] ?? '';
     const failures = audit({
       ...repoInput(),
-      files: [{ path: 'src/extractors/advisory/read.ts', text: `const url = '${endpoint}';\n` }],
+      files: [{ path: 'src/reports/summary.ts', text: `const url = '${endpoint}';\n` }],
     });
 
-    expect(failures.some((failure) => failure.path === 'src/extractors/advisory/read.ts')).toBe(true);
+    expect(failures.some((failure) => failure.path === 'src/reports/summary.ts')).toBe(true);
   });
 
   it('rejects an em dash in docs and code', () => {
@@ -662,7 +662,7 @@ describe('guard', () => {
 
   it('ships project rules and always applies the core rule', () => {
     const dir = path.join(root, '.cursor/rules');
-    const names = ['core.mdc', 'fixes.mdc', 'grok.mdc', 'protected.mdc'];
+    const names = ['core.mdc', 'fixes.mdc', 'protected.mdc', 'reports.mdc'];
     for (const name of names) {
       const text = readFileSync(path.join(dir, name), 'utf8');
       expect(text.startsWith('---\n')).toBe(true);

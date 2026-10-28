@@ -138,7 +138,7 @@ Success reasons:
 
 `close-open-port` lists an undo on the allow-list: authorize that same ingress rule again. The handler does not perform the undo. The two bucket fixes list `There is no undo`.
 
-A fix calls Grok only when `fix.json` says `callsGrok` is true. All three say `false`. The only xAI call in this repository is `extract()` in [src/grok/client.ts](src/grok/client.ts). Temperature is 0, the timeout is 15 seconds, and a failure is `no_key`, `timeout`, `http_error`, `bad_json`, or `schema_mismatch`. The advisory reader in [src/extractors/advisory/](src/extractors/advisory/) uses that call for free text, then code checks the facts and compares them with [inventory/services.json](inventory/services.json). CloudTrail intake is structured. That path does not call Grok.
+A fix calls Grok only when `fix.json` says `callsGrok` is true. All three say `false`. The only xAI call in this repository is `extract()` in [src/grok/client.ts](src/grok/client.ts). Temperature is 0, the timeout is 15 seconds, and a failure is `no_key`, `timeout`, `http_error`, `bad_json`, or `schema_mismatch`. CloudTrail intake is structured. That path does not call Grok.
 
 ## IAM tag conditions
 

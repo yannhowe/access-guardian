@@ -39,7 +39,7 @@ If `fromPort` and `toPort` are the same single port, the starter fix can plan a 
 1. AG Lead opens the case from the webhook body or from a Slack message that tags `@AG-lead`. Lead keeps the case in Notion under `AG cases`.
 2. AG Context records who, why, the owner, and the intended state. Identity is merged into AG Context. Context uses structured records. Context does not call Grok and does not change AWS.
 3. AG Change picks an allow-listed fix or proposes a build. One finding, one resource. A wildcard request is too broad. If the key is already registered, Change reuses it. If the key is allowed but not built, Change asks Builder to write it. If the key is not on the list, a human handles it. Change does not call Grok and does not run the fix.
-4. AG Builder, a Cursor cloud agent, opens a pull request when a new fix is needed. A new fix follows `.cursor/skills/writing-remediators/SKILL.md`. The advisory reader follows `.cursor/skills/writing-extractors/SKILL.md`. The guard test must pass. Builder does not merge.
+4. AG Builder, a Cursor cloud agent, opens a pull request when a new fix is needed. A new fix follows `.cursor/skills/writing-remediators/SKILL.md`. The guard test must pass. Builder does not merge.
 5. Yann reviews and merges. That merge is the gate for code. A merge to `main` runs `.github/workflows/terraform-apply.yml`.
 6. AG Lead shows Yann the plan: the Lambda for that fix, the one IAM action, and the dry-run result (`changed: false`). Lead assumes `ag-bot-invoker` for the invoke. That role is created outside Terraform (manual), with `lambda:InvokeFunction` on `ag-fix-*`. `ag-reader` handles read-only checks and is created outside Terraform (manual). TODO: move both roles into `infra/`. Lead does not set `apply` until Yann says yes. Without the yes, the invoke stays a dry run.
 
@@ -50,7 +50,6 @@ Grok is called only for free text that code cannot parse. Each call goes through
 | Call | Where | What Grok decides | What code decides |
 | --- | --- | --- | --- |
 | `extract()` | `src/grok/client.ts`, the only HTTP call to xAI | Nothing about the case. It returns JSON that passed `validate`, or `no_key`, `timeout`, `http_error`, `bad_json`, or `schema_mismatch`. Temperature is 0. The wait is 15 seconds. | Whether the facts match the source, and whether a fix may run. On failure, do not act. |
-| Advisory reader | `src/extractors/advisory/read.ts` | `packageName`, `vulnerableFunctions`, `affectedRanges`, `fixedVersion`, and `workaround` from advisory prose, or a typed failure. | Whether each fact is supported by the prose, whether the canonical range and the fixed version equal the trusted alert, and which inventory services sit inside the ranges. A miss is `invalid_facts`. No guessed version. |
 | Slack prose | Grok Bot app, not this repo | The fact fields named in that call's schema, and only when the message is free text code cannot parse. | Whether those facts are complete enough to open a case. A failure opens nothing. |
 | CloudTrail webhook | No Grok call | | The bot reads the transformer fields. |
 | Context, Change, Yann's yes, merge | No Grok call | | Code and Yann. Grok does not decide that an actor was authorized. |
@@ -66,8 +65,7 @@ The client reads `XAI_API_KEY` from the environment. `XAI_MODEL` overrides the d
 - `infra/main.tf`: one Terraform name per fix. The module always sets the permissions boundary.
 - `tests/fixes/`: a fake AWS client per fix. Default is dry-run. One mutating call when apply is set. Bad input does not call AWS.
 - `tests/guard.test.ts`: the tree passes, and a fix off the list, a second mutating action, or an xAI call outside the client fails.
-- `src/extractors/advisory/README.md`: the advisory reader contract. Tests are `tests/extractors/advisory.test.ts`.
-- `inventory/services.json`: synthetic services and the exact npm versions they run. Teammates read it to see whether an advisory package is installed.
+- `inventory/services.json`: synthetic services and the exact npm versions they run.
 
 Commands:
 
@@ -79,13 +77,9 @@ terraform -chdir=infra init -backend=false
 terraform -chdir=infra validate
 ```
 
-## Advisory reader
-
-The advisory reader lives in `src/extractors/advisory/` and follows the writing-extractors skill. Tests are `tests/extractors/advisory.test.ts`. Leave the CloudTrail path on structured fields. Do not add a second Grok client. Tests mock `fetch`.
-
 ## Service inventory
 
-`inventory/services.json` is synthetic. The advisory reader compares a verified range with these exact versions. `@acme-demo/yaml-lite` is on `billing-api` at `2.3.1` (affected), on `ledger-worker` at `1.9.2` (affected, old line, no fix on 1.x), and on `portal-web` at `2.4.3` (fixed). `notify-relay` and `directory-sync` do not use it. See `inventory/README.md`.
+`inventory/services.json` is synthetic. `@acme-demo/yaml-lite` is on `billing-api` at `2.3.1`, on `ledger-worker` at `1.9.2`, and on `portal-web` at `2.4.3`. `notify-relay` and `directory-sync` do not use it. See `inventory/README.md`.
 
 ## Trade-off
 

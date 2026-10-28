@@ -118,7 +118,7 @@ The brief: who, why, owner, intended state. Identity is merged into Context.
 
 From the runbook: Context checks whether a change is reasonable to make now, who owns the resource, who is on call, and whether a freeze is active. Context uses structured records. Context does not call Grok and does not change AWS.
 
-TODO (Yann): where the owner record, the on-call record, and the freeze flag live. They are not in this repo. `inventory/services.json` is a synthetic package list for the advisory reader. It is not a cloud inventory of intended state.
+TODO (Yann): where the owner record, the on-call record, and the freeze flag live. They are not in this repo. `inventory/services.json` is a synthetic package list. It is not a cloud inventory of intended state.
 
 ### AG Change
 
@@ -130,17 +130,16 @@ From the runbook: Change checks whether an approved request covers this one find
 
 The brief: Builder writes the fix PR through a Cursor cloud agent.
 
-From the runbook: a new fix follows `.cursor/skills/writing-remediators/SKILL.md`. The advisory reader follows `.cursor/skills/writing-extractors/SKILL.md`. The guard test must pass. Builder does not merge.
+From the runbook: a new fix follows `.cursor/skills/writing-remediators/SKILL.md`. The guard test must pass. Builder does not merge.
 
 ### The repo, the rules, and the skills
 
-- `AGENTS.md` is the agent contract: one fix per pull request, dry run by default, Grok only through `extract()`, no merge unless Yann asks, no AWS from the agent.
-- `.cursor/rules/core.mdc` applies to every change: plain English, no em dashes, synthetic data, no secrets, and the same intended-state rule as the allow-list.
-- `.cursor/rules/fixes.mdc` is the shape of one fix.
-- `.cursor/rules/grok.mdc` is the Grok call rule.
+- `AGENTS.md` is the agent contract: one fix per pull request, dry run by default, agents never merge, Yann merges, no AWS from the agent.
+- `.cursor/rules/core.mdc` applies to every change: plain English, no em dashes, synthetic data, no secrets, and the same intended-state rule as the allow-list. The demo scope is public S3 buckets and open ports only.
+- `.cursor/rules/fixes.mdc` is the shape of one fix, including the world-open port rule. The port list is `src/policy/sensitive-ports.ts`.
+- `.cursor/rules/reports.mdc` is the report rule. All xAI calls go through `src/grok/client.ts`. A report Lambda is read-only. Grok writes a summary and does not trigger an action.
 - `.cursor/rules/protected.mdc` lists paths an agent must not edit. The matching check is `scripts/check-protected-paths.mjs`. Protected paths are `src/guard/`, `tests/guard*`, `infra/modules/`, `.github/`, `src/fixes/allow-list.ts`, and `.cursor/`. Yann adds the `guard-change` label. An agent does not.
 - `.cursor/skills/writing-remediators/SKILL.md` is the procedure for a new fix folder.
-- `.cursor/skills/writing-extractors/SKILL.md` is the procedure when free text has to be read.
 
 The allow-list on main has three keys:
 
@@ -158,11 +157,7 @@ A Cursor cloud agent run is how Builder opens the pull request. TODO (Yann): the
 
 `extract()` in `src/grok/client.ts` is the only HTTP call to xAI. Temperature is 0. The wait is 15 seconds. The key is `XAI_API_KEY`. The model is `XAI_MODEL`, or `grok-4.7` when that variable is unset. A missing key returns `no_key` and does not call the network. Other failures are `timeout`, `http_error`, `bad_json`, and `schema_mismatch`. The client does not log the key, the prompt, or the reply.
 
-The only non-test caller is `readAdvisory()` in `src/extractors/advisory/read.ts`. `assessAdvisory()` in the same file calls `readAdvisory()`, then compares the verified ranges with the inventory in code. What Grok decides there: the package name, the vulnerable functions, the affected ranges, the fixed version, and the workaround, and only when `validate` passes. What code decides: whether each fact is supported by the prose and the trusted alert, and which inventory services sit inside the ranges. A miss is `invalid_facts`.
-
-No fix handler imports `extract()`. The three Lambdas do not call Grok. No workflow calls it. The CloudTrail webhook is structured, so that path does not call Grok. The Slack prose call, when the message is free text code cannot parse, is in the Grok Bot app, not in this repo.
-
-So the remediation path does not call the Grok API at runtime. The advisory functions will call it when some caller invokes them. In this repo those functions are invoked by tests, and the tests mock `fetch`.
+No fix handler imports `extract()`. The three Lambdas do not call Grok. No workflow calls it. The CloudTrail webhook is structured, so that path does not call Grok. The Slack prose call, when the message is free text code cannot parse, is in the Grok Bot app, not in this repo. Tests mock `fetch` and pass with no key.
 
 ## Walk trigger to output
 
@@ -182,7 +177,7 @@ Handoffs, in the order the runbook gives them:
 Human approvals, as the brief lists them, and what the repo actually enforces:
 
 - Build approval. The runbook says that without Yann's yes, the invoke stays a dry run and Builder does not start. TODO (Yann): whether "build approval" is that same yes or a separate click. The repo has no second flag for it.
-- Pull request review and merge. Builder does not merge. Yann merges only when he explicitly asks. That is the merge gate in `docs/architecture.md` and `AGENTS.md`.
+- Pull request review and merge. Agents never merge. Yann merges. That is the merge gate in `AGENTS.md` and `.cursor/rules/core.mdc`.
 - `guard-change` label. Required when the pull request touches a protected path. Only Yann adds it. This Pages change adds `.github/workflows/pages.yml`, so this pull request needs that label before the plan check can pass.
 - Run approval. `apply` defaults to false. Only a boolean `true` performs the one mutating call, and the bot sets that after Yann's yes.
 - Tags as standing consent. That phrase is the brief's. In the code, tags are the recorded intended state and the eligibility check. They are not a substitute for Yann's yes. `auto-remediate=true` is required before the close. `purpose=ag-demo-synthetic` marks the demo. `intended-public=true` is the only signal that may remove a block, and only on `ag-demo-public-10281729`. Case text cannot set it.
@@ -231,8 +226,8 @@ Profile. The approver in the brief is Yann, `U0CAKUDP3L0`. The channel in the re
 
 Skills. Two different things share the word.
 
-- A skill file in this repo (`.cursor/skills/writing-remediators/SKILL.md` or `writing-extractors/SKILL.md`) changes by pull request. `.cursor/` is protected, so Yann adds the `guard-change` label before that check can pass. An example: "If we want every new fix to require a second tag, that is an edit to the remediator skill and to the guard. The guard is a protected path. It is a pull request, not a live toggle."
-- A skill attached to a bot in the Grok Bot app is the live list. TODO (Yann): how that list is edited. An example of the request, not the clicks: "Detach the extractor skill from AG Change if Change must never read free text." The runbook already says Change does not call Grok.
+- A skill file in this repo (`.cursor/skills/writing-remediators/SKILL.md`) changes by pull request. `.cursor/` is protected, so Yann adds the `guard-change` label before that check can pass. An example: "If we want every new fix to require a second tag, that is an edit to the remediator skill and to the guard. The guard is a protected path. It is a pull request, not a live toggle."
+- A skill attached to a bot in the Grok Bot app is the live list. TODO (Yann): how that list is edited. An example of the request, not the clicks: "Detach a free-text skill from AG Change if Change must never read free text." The runbook already says Change does not call Grok.
 
 Routines. AG Lead has a CloudTrail webhook routine and a Slack routine whose keyword filter is `@AG-lead`. That filter is bot config. The webhook endpoint was created by hand. It is not Terraform. The URL is not in the repo. An example: "Pointing the webhook at a new routine means updating the EventBridge API destination `ag-lead-webhook`, which `docs/intake.md` says was created with the AWS CLI, and updating the routine on AG Lead. I do not have the URL in this repo." Another example: "Changing which Slack tag reaches Lead means editing that keyword on the Slack routine. `ag-cloudtrail-s3-public-access-to-lead` is created outside Terraform (manual). A bot profile edit does not create that rule."
 
