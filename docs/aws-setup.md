@@ -21,19 +21,60 @@ Put the two ARNs in the repository variables of those names.
 
 ## Boundary policy
 
-Create a customer managed policy named `ag-fix-boundary`. Every fix role is created with this policy as its permissions boundary. The boundary is the ceiling.
+Create a customer managed policy named `ag-fix-boundary`. Every fix role is created with this policy as its permissions boundary. The boundary is the ceiling. The document in git is `bootstrap/boundary.json`. Terraform does not create or update that policy. A merge does not publish it.
 
 It may allow:
 
 - `ec2:DescribeSecurityGroupRules` and `ec2:DescribeSecurityGroups`
-- `ec2:RevokeSecurityGroupIngress` on security groups
-- `s3:GetBucketTagging` and `s3:GetBucketPublicAccessBlock`
-- `s3:PutBucketPublicAccessBlock` for the bucket public access block fixes. AWS authorizes `DeletePublicAccessBlock` with this same action. A fix may open access only when it returns a resource to its intended state, proven both by the public=true tag check in the handler and by the IAM tag condition on the fix role. The only fix that may remove the block is the one for a bucket tagged `public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic`. Every other fix stays close-only.
+- `ec2:RevokeSecurityGroupIngress` on security groups (`arn:aws:ec2:*:*:security-group/*`)
+- `s3:GetBucketTagging` and `s3:GetBucketPublicAccessBlock` on `arn:aws:s3:::ag-demo-*`
+- `s3:PutBucketPublicAccessBlock` on `arn:aws:s3:::ag-demo-*` for the bucket public access block fixes. AWS authorizes `DeletePublicAccessBlock` with this same action. A fix may open access only when it returns a resource to its intended state, proven both by the public=true tag check in the handler and by the IAM tag condition on the fix role. The only fix that may remove the block is the one for a bucket tagged `public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic`. Every other fix stays close-only.
 - `logs:CreateLogStream` and `logs:PutLogEvents` on `/aws/lambda/ag-fix-*`
+- These six IAM actions, and no other IAM actions, on `arn:aws:iam::*:user/*` only. The resource is users. It is not roles, groups, or policies.
+  - `iam:GetUser`
+  - `iam:ListUserTags`
+  - `iam:GetUserPolicy`
+  - `iam:ListAttachedUserPolicies`
+  - `iam:ListGroupsForUser`
+  - `iam:PutUserPolicy`
 
-It must not allow `Authorize*`, `Delete*PublicAccessBlock`, `iam:*`, or `Put*Policy`. The remove fix still uses IAM action `s3:PutBucketPublicAccessBlock`. The boundary does not gain `s3:DeleteBucketPublicAccessBlock`.
+That IAM allow is the ceiling for `contain-iam-user`. The role policy still requires `auto-remediate=true` and `purpose=ag-demo-synthetic` on every one of those actions except `iam:ListUserTags`.
 
-Put the policy ARN in the repository variable `AG_FIX_BOUNDARY_ARN`. Terraform refuses any other policy name.
+The exact exception to the old `iam:*` and `Put*Policy` ban is those six actions on users. `iam:PutUserPolicy` is the only `Put*Policy` action the boundary allows, and only on `arn:aws:iam::*:user/*`.
+
+An explicit deny on `arn:aws:iam::*:user/*` uses `NotAction` for exactly those six. Every other action on a user stays denied, including `iam:CreateAccessKey`, `iam:AttachUserPolicy`, `iam:DeleteUser`, `iam:CreateUser`, and `iam:DeleteUserPolicy`. A second explicit deny is `iam:*` with `NotResource` `arn:aws:iam::*:user/*`, so `iam:PassRole` and `iam:PutRolePolicy` stay denied on roles and on every other non-user resource. There is no wildcard IAM allow.
+
+`s3:PutBucketPolicy` stays on its own explicit deny, with the other S3 `Put*Policy` actions (`s3:PutAccessPointPolicy`, `s3:PutAccessPointPolicyForObjectLambda`, and `s3:PutMultiRegionAccessPointPolicy`). That deny does not name `iam:PutUserPolicy` or `s3:PutBucketPublicAccessBlock`. The boundary does not gain `s3:DeleteBucketPublicAccessBlock`.
+
+It must not allow `Authorize*`, `Delete*PublicAccessBlock`, any IAM action outside the six, or any `Put*Policy` action other than `iam:PutUserPolicy` on users.
+
+`iam:DeleteUserPolicy` is not one of the six. The allow-list undo for `contain-iam-user` is to delete the inline policy `ag-containment-deny`. That undo needs `iam:DeleteUserPolicy`. This boundary does not grant it. A person deletes that inline policy. The fix does not.
+
+Put the policy ARN in the repository variable `AG_FIX_BOUNDARY_ARN`. Terraform refuses any other policy name. Do not write the ARN in git.
+
+### Publishing a new version
+
+This policy stays outside `terraform apply`. The apply role would need rights to publish a new version of the boundary on the fix roles, including its own ceiling. That is a privilege-escalation path. The apply role still cannot change the boundary. Yann publishes a new version by hand, with a scoped principal. Do not use the account root key.
+
+There is no bootstrap script in this repository. The hand command is `aws iam create-policy-version` with `--set-as-default`. IAM keeps at most 5 versions of a customer managed policy. When 5 versions already exist, delete the oldest version that is not the default, then create the new one. The policy ARN is `$AG_FIX_BOUNDARY_ARN`.
+
+```bash
+aws iam create-policy-version \
+  --policy-arn "$AG_FIX_BOUNDARY_ARN" \
+  --policy-document file://bootstrap/boundary.json \
+  --set-as-default
+```
+
+When that call reports a version limit, list the versions, delete one non-default version, and run the create command again:
+
+```bash
+aws iam list-policy-versions --policy-arn "$AG_FIX_BOUNDARY_ARN"
+aws iam delete-policy-version \
+  --policy-arn "$AG_FIX_BOUNDARY_ARN" \
+  --version-id <oldest-non-default>
+```
+
+The boundary ARN has no version id, so the existing fix roles use the default version. Setting the new version as default applies it without a Terraform apply and without editing the roles.
 
 ## State
 
