@@ -5,11 +5,13 @@
  * is a finding when any IPv4 or IPv6 source range is not fully inside private
  * space. Private space is 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
  * 100.64.0.0/10, and fc00::/7. A range that only partly overlaps that space,
- * and a CIDR that cannot be parsed, are findings. Protocol -1, a range that
- * overlaps a sensitive port, and a missing or unparseable port count as
- * sensitive. A sensitive port stays a finding when the group is tagged
- * public=true. Any other port uses the world-open rule: 0.0.0.0/0 or ::/0
- * is a finding unless that tag is set with the exact key and value.
+ * and a CIDR that cannot be parsed, are findings. Protocol -1, a tcp or udp
+ * range that covers a sensitive port, and a missing or unparseable port
+ * count as sensitive. A tcp or udp range that covers none of those ports
+ * uses the world-open rule. A sensitive port stays a finding when the group
+ * is tagged public=true. Any other port uses the world-open rule: 0.0.0.0/0
+ * or ::/0 is a finding unless that tag is set with the exact key and value.
+ * IPv6 outside fc00::/7 is outside private space.
  */
 import { SENSITIVE_PORTS } from './sensitive-ports.js';
 
@@ -64,6 +66,20 @@ export function classifyIngress(rule: IngressRule, sgTags: readonly SecurityGrou
   return 'finding';
 }
 
+/**
+ * IPv4 or IPv6 when the text is one CIDR the checkers below accept.
+ * Host bits may be set. Anything else is not a CIDR.
+ */
+export function cidrFamily(cidr: string): 'ipv4' | 'ipv6' | undefined {
+  if (parseIpv4Cidr(cidr) !== undefined) {
+    return 'ipv4';
+  }
+  if (parseIpv6Cidr(cidr) !== undefined) {
+    return 'ipv6';
+  }
+  return undefined;
+}
+
 function isWorldOpen(rule: IngressRule): boolean {
   return rule.ipv4Cidrs.some(isWorldCidr) || rule.ipv6Cidrs.some(isWorldCidr);
 }
@@ -76,6 +92,9 @@ function isSensitive(rule: IngressRule): boolean {
   if (rule.protocol === ALL_TRAFFIC) {
     return true;
   }
+  // tcp and udp ranges that cover a sensitive port count as that port.
+  // Any other protocol that carries ports uses the same port check.
+  // Protocol -1 is handled above and does not depend on the port numbers.
   return portsAreSensitive(rule.fromPort, rule.toPort);
 }
 
