@@ -1,0 +1,22 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadBucket",
+      "Effect": "Allow",
+      "Action": ["s3:GetBucketTagging", "s3:GetBucketPublicAccessBlock"],
+      "Resource": "arn:aws:s3:::ag-demo-public-10281729"
+    },
+    {
+      "Sid": "RemovePublicAccessBlock",
+      "Effect": "Allow",
+      "Action": ["s3:PutBucketPublicAccessBlock"],
+      "Resource": "arn:aws:s3:::ag-demo-public-10281729",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/intended-public": "true"
+        }
+      }
+    }
+  ]
+}

@@ -4,7 +4,7 @@ Repo code changes go through Cursor cloud agent pull requests. Paste the full ou
 
 Write plain English. Do not use em dashes in docs or code comments.
 
-Synthetic data only. Defensive remediation only. A fix removes or tightens access. It does not include exploit payloads or attack steps.
+Synthetic data only. Defensive remediation only. A fix returns a resource to its recorded intended state. The only case where that opens access: a fix may remove Block Public Access on an S3 bucket that carries all three tags intended-public=true, auto-remediate=true, and purpose=ag-demo-synthetic (exact key and value, case-sensitive). The intended state comes only from the intended-public=true tag, never from case or finding text. It does not include exploit payloads or attack steps.
 
 Keep secrets out of code, logs, tests, fixtures, and pull requests. Do not print them. The xAI key is the environment variable `XAI_API_KEY`. Tests mock the network and must pass with no key set.
 

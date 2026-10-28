@@ -331,6 +331,70 @@ describe('restore-bucket-public-access-block handler', () => {
     }
   });
 
+  it('skips a bucket tagged intended-public=true and does not put', async () => {
+    const tags = {
+      TagSet: [
+        { Key: 'owner', Value: 'demo' },
+        { Key: 'purpose', Value: 'ag-demo-synthetic' },
+        { Key: 'auto-remediate', Value: 'true' },
+        { Key: 'intended-public', Value: 'true' },
+      ],
+    };
+    for (const apply of [undefined, false, true] as const) {
+      const { client, send } = fakeClient({ tags });
+      const event = apply === undefined ? EVENT : { ...EVENT, apply };
+      const result = await handleRestoreBucketPublicAccessBlock(event, client);
+      expect(result, `apply=${String(apply)}`).toEqual({
+        ok: false,
+        changed: false,
+        errorCode: 'IntendedPublicBucket',
+        errorMessage: 'bucket tagged intended-public=true is left unchanged',
+      });
+      expect(puts(send), `apply=${String(apply)}`).toEqual([]);
+      expect(send, `apply=${String(apply)}`).toHaveBeenCalledTimes(1);
+      expect(send.mock.calls[0]?.[0]).toBeInstanceOf(GetBucketTaggingCommand);
+    }
+  });
+
+  it('skips an intended-public bucket even when purpose and auto-remediate do not match', async () => {
+    const { client, send } = fakeClient({
+      tags: {
+        TagSet: [
+          { Key: 'purpose', Value: 'other-value' },
+          { Key: 'intended-public', Value: 'true' },
+        ],
+      },
+    });
+
+    const result = await handleRestoreBucketPublicAccessBlock({ ...EVENT, apply: true }, client);
+
+    expect(result).toEqual({
+      ok: false,
+      changed: false,
+      errorCode: 'IntendedPublicBucket',
+      errorMessage: 'bucket tagged intended-public=true is left unchanged',
+    });
+    expect(JSON.stringify(result)).not.toContain('other-value');
+    expect(puts(send)).toEqual([]);
+  });
+
+  it('does not skip a bucket when intended-public is not exactly true', async () => {
+    const { client, send } = fakeClient({
+      tags: {
+        TagSet: [
+          { Key: 'purpose', Value: 'ag-demo-synthetic' },
+          { Key: 'auto-remediate', Value: 'true' },
+          { Key: 'intended-public', Value: 'True' },
+        ],
+      },
+    });
+
+    const result = await handleRestoreBucketPublicAccessBlock({ ...EVENT, apply: true }, client);
+
+    expect(result).toMatchObject({ ok: true, changed: true, reason: 'restored' });
+    expect(puts(send)).toHaveLength(1);
+  });
+
   it('accepts the demo tag alongside another tag', async () => {
     const { client, send } = fakeClient({
       tags: {
@@ -505,6 +569,12 @@ describe('restore-bucket-public-access-block handler', () => {
     expect(source).not.toMatch(/PutBucketPolicy/);
     expect(source).not.toMatch(/PutBucketAcl/);
     expect(source).not.toMatch(/PutAccountPublicAccessBlock/);
+    expect(source).toContain("const INTENDED_PUBLIC_TAG_KEY = 'intended-public'");
+    expect(source).toContain("const INTENDED_PUBLIC_TAG_VALUE = 'true'");
+    const intendedAt = source.indexOf('if (hasIntendedPublicTag(');
+    const putAt = source.indexOf('new PutBucketPublicAccessBlockCommand');
+    expect(intendedAt).toBeGreaterThan(-1);
+    expect(putAt).toBeGreaterThan(intendedAt);
 
     for (const flag of FLAGS) {
       const writes = [...source.matchAll(new RegExp(`\\b${flag}\\s*:\\s*([^,}\\n]+)`, 'g'))];

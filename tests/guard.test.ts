@@ -298,6 +298,7 @@ describe('guard', () => {
 
     expect(failures.filter((failure) => failure.message.includes('hasAutoRemediateTag'))).toEqual([]);
     expect(failures.filter((failure) => failure.message.includes('AUTO_REMEDIATE_TAG'))).toEqual([]);
+    expect(failures.filter((failure) => failure.message.includes('intended-public'))).toEqual([]);
   });
 
   it('fails when an allow-listed handler does not call hasAutoRemediateTag', () => {
@@ -342,6 +343,124 @@ describe('guard', () => {
     expect(messages).toContain('fix close-open-port calls hasAutoRemediateTag( after its mutating send');
     expect(messages).not.toContain(
       'fix close-open-port does not call hasAutoRemediateTag( before its mutating send',
+    );
+  });
+
+  function publicAccessHandler(body: string): string {
+    return [
+      "const AUTO_REMEDIATE_TAG_KEY = 'auto-remediate';",
+      "const AUTO_REMEDIATE_TAG_VALUE = 'true';",
+      "const INTENDED_PUBLIC_TAG_KEY = 'intended-public';",
+      "const INTENDED_PUBLIC_TAG_VALUE = 'true';",
+      'function hasAutoRemediateTag(tags: { Key?: string; Value?: string }[]) {',
+      '  return false;',
+      '}',
+      'function hasIntendedPublicTag(tags: { Key?: string; Value?: string }[]) {',
+      '  return false;',
+      '}',
+      'new GetBucketTaggingCommand({})',
+      'if (!hasAutoRemediateTag(tags)) {',
+      '  return { ok: false };',
+      '}',
+      body,
+      'new PutBucketPublicAccessBlockCommand({})',
+    ].join('\n');
+  }
+
+  function intendedPublicMessages(handlerText: string, name: string): string[] {
+    const failures = audit({
+      ...repoInput(),
+      terraform: undefined,
+      fixes: [folder({ name, handlerText })],
+    });
+    return failures.map((failure) => failure.message).filter((message) => message.includes('intended-public'));
+  }
+
+  it('passes when remove-bucket-public-access-block requires intended-public before the send', () => {
+    const handlerText = publicAccessHandler(
+      ['if (!hasIntendedPublicTag(tags)) {', '  return { ok: false };', '}'].join('\n'),
+    );
+
+    expect(intendedPublicMessages(handlerText, 'remove-bucket-public-access-block')).toEqual([]);
+  });
+
+  it('passes when restore-bucket-public-access-block requires intended-public to be absent before the send', () => {
+    const handlerText = publicAccessHandler(
+      ['if (hasIntendedPublicTag(tags)) {', '  return { ok: false };', '}'].join('\n'),
+    );
+
+    expect(intendedPublicMessages(handlerText, 'restore-bucket-public-access-block')).toEqual([]);
+  });
+
+  it('fails when remove-bucket-public-access-block does not require intended-public to be present', () => {
+    const missing = publicAccessHandler('const ready = true;');
+    const wrongWay = publicAccessHandler(
+      ['if (hasIntendedPublicTag(tags)) {', '  return { ok: false };', '}'].join('\n'),
+    );
+
+    expect(intendedPublicMessages(missing, 'remove-bucket-public-access-block')).toContain(
+      'fix remove-bucket-public-access-block does not require intended-public to be present before its mutating send',
+    );
+    expect(intendedPublicMessages(wrongWay, 'remove-bucket-public-access-block')).toContain(
+      'fix remove-bucket-public-access-block does not require intended-public to be present before its mutating send',
+    );
+  });
+
+  it('fails when remove-bucket-public-access-block checks intended-public after the send', () => {
+    const handlerText = [
+      publicAccessHandler('const ready = true;'),
+      'if (!hasIntendedPublicTag(tags)) {',
+      '  return { ok: false };',
+      '}',
+    ].join('\n');
+
+    const messages = intendedPublicMessages(handlerText, 'remove-bucket-public-access-block');
+    expect(messages).toContain(
+      'fix remove-bucket-public-access-block checks intended-public after its mutating send',
+    );
+    expect(messages).not.toContain(
+      'fix remove-bucket-public-access-block does not require intended-public to be present before its mutating send',
+    );
+  });
+
+  it('fails when restore-bucket-public-access-block does not require intended-public to be absent', () => {
+    const missing = publicAccessHandler('const ready = true;');
+    const wrongWay = publicAccessHandler(
+      ['if (!hasIntendedPublicTag(tags)) {', '  return { ok: false };', '}'].join('\n'),
+    );
+
+    expect(intendedPublicMessages(missing, 'restore-bucket-public-access-block')).toContain(
+      'fix restore-bucket-public-access-block does not require intended-public to be absent before its mutating send',
+    );
+    expect(intendedPublicMessages(wrongWay, 'restore-bucket-public-access-block')).toContain(
+      'fix restore-bucket-public-access-block does not require intended-public to be absent before its mutating send',
+    );
+  });
+
+  it('fails when restore-bucket-public-access-block checks intended-public after the send', () => {
+    const handlerText = [
+      publicAccessHandler('const ready = true;'),
+      'if (hasIntendedPublicTag(tags)) {',
+      '  return { ok: false };',
+      '}',
+    ].join('\n');
+
+    const messages = intendedPublicMessages(handlerText, 'restore-bucket-public-access-block');
+    expect(messages).toContain(
+      'fix restore-bucket-public-access-block checks intended-public after its mutating send',
+    );
+    expect(messages).not.toContain(
+      'fix restore-bucket-public-access-block does not require intended-public to be absent before its mutating send',
+    );
+  });
+
+  it('fails when a bucket public access block fix declares the wrong intended-public key', () => {
+    const handlerText = publicAccessHandler(
+      ['if (!hasIntendedPublicTag(tags)) {', '  return { ok: false };', '}'].join('\n'),
+    ).replace("const INTENDED_PUBLIC_TAG_KEY = 'intended-public';", "const INTENDED_PUBLIC_TAG_KEY = 'Intended-Public';");
+
+    expect(intendedPublicMessages(handlerText, 'remove-bucket-public-access-block')).toContain(
+      "fix remove-bucket-public-access-block does not declare const INTENDED_PUBLIC_TAG_KEY = 'intended-public'",
     );
   });
 

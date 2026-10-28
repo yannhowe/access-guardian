@@ -1,11 +1,11 @@
 ---
 name: writing-remediators
-description: "Use when adding a defensive fix this repo may run. Adds one fix folder, one Terraform name, one close action, and makes the guard test pass."
+description: "Use when adding a defensive fix this repo may run. Adds one fix folder, one Terraform name, one hardcoded action, and makes the guard test pass."
 ---
 
 # Writing remediators
 
-Use this when a case needs a fix this repo does not have yet. The brief names exactly one close or tighten action on one resource. If the brief names two changes, or one change that opens access, stop and say so. Do not build it.
+Use this when a case needs a fix this repo does not have yet. The brief names exactly one action on one resource. If the brief names two changes, stop and say so. Do not build it. A fix returns a resource to its recorded intended state. The only case where that opens access: a fix may remove Block Public Access on an S3 bucket that carries all three tags intended-public=true, auto-remediate=true, and purpose=ag-demo-synthetic (exact key and value, case-sensitive). The intended state comes only from the intended-public=true tag, never from case or finding text.
 
 Read these before writing anything:
 
@@ -34,7 +34,7 @@ Do not edit the Grok client. Do not approve the change or set `apply` to true yo
 
 ## 1. Allow-list
 
-`ALLOWED_FIXES` is what this repo is willing to automate. Add a key only when it is one close or tighten, with an obvious undo, and no data loss. The key is the folder name: lowercase words and hyphens, like `close-open-port`.
+`ALLOWED_FIXES` is what this repo is willing to automate. Add a key only when the fix returns one resource to its recorded intended state, with no data loss. The only case where that opens access is the three-tag Block Public Access exception above. The key is the folder name: lowercase words and hyphens, like `close-open-port`.
 
 `findingKey` is the case key, such as `cloud:open_port`. `action` is the one IAM action, such as `ec2:RevokeSecurityGroupIngress`. `summary` is one sentence. `undo` is the human step. The fix does not perform the undo.
 

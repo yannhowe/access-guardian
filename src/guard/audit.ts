@@ -7,7 +7,10 @@
  * adds them to that list. Handlers may only construct SDK commands for
  * actions the policy lists. Every allow-listed handler declares the
  * auto-remediate tag key and value, and calls hasAutoRemediateTag( before
- * its one mutating send.
+ * its one mutating send. The two bucket public access block fixes also
+ * check intended-public before that send. remove-bucket-public-access-block
+ * requires the tag to be present. restore-bucket-public-access-block
+ * requires the tag to be absent.
  *
  * The xAI endpoint and the key and model env names may appear only in the
  * Grok client and its unit test.
@@ -350,6 +353,7 @@ function scanFix(fix: FixFolder, input: AuditInput, failures: AuditFailure[]): v
 
   if (allowed !== undefined) {
     scanAutoRemediateTag(fix, failures);
+    scanIntendedPublicTag(fix, failures);
   }
 }
 
@@ -589,6 +593,75 @@ function firstTagCallIndex(text: string): number | undefined {
       continue;
     }
     return index;
+  }
+  return undefined;
+}
+
+const INTENDED_PUBLIC_TAG_KEY_DECL = "const INTENDED_PUBLIC_TAG_KEY = 'intended-public'";
+const INTENDED_PUBLIC_TAG_VALUE_DECL = "const INTENDED_PUBLIC_TAG_VALUE = 'true'";
+const INTENDED_PUBLIC_PRESENT = /if\s*\(\s*!\s*hasIntendedPublicTag\s*\(/;
+const INTENDED_PUBLIC_ABSENT = /if\s*\(\s*hasIntendedPublicTag\s*\(/;
+
+/**
+ * remove-bucket-public-access-block must refuse unless intended-public=true
+ * is present. restore-bucket-public-access-block must refuse when that tag
+ * is present. The if form has to appear before the mutating command so the
+ * guard can see which way the check goes.
+ */
+function scanIntendedPublicTag(fix: FixFolder, failures: AuditFailure[]): void {
+  const mode = intendedPublicMode(fix.name);
+  if (mode === undefined) {
+    return;
+  }
+  const text = fix.handlerText;
+  if (text === null) {
+    return;
+  }
+  const path = `src/fixes/${fix.name}/handler.ts`;
+  if (!text.includes(INTENDED_PUBLIC_TAG_KEY_DECL)) {
+    failures.push({
+      path,
+      message: `fix ${fix.name} does not declare const INTENDED_PUBLIC_TAG_KEY = 'intended-public'`,
+    });
+  }
+  if (!text.includes(INTENDED_PUBLIC_TAG_VALUE_DECL)) {
+    failures.push({
+      path,
+      message: `fix ${fix.name} does not declare const INTENDED_PUBLIC_TAG_VALUE = 'true'`,
+    });
+  }
+
+  const mutatingAt = firstMutatingCommandIndex(text);
+  if (mutatingAt === undefined) {
+    return;
+  }
+  const before = text.slice(0, mutatingAt);
+  const after = text.slice(mutatingAt);
+  const matchedBefore = mode === 'present' ? INTENDED_PUBLIC_PRESENT.test(before) : INTENDED_PUBLIC_ABSENT.test(before);
+  if (matchedBefore) {
+    return;
+  }
+  const matchedAfter = mode === 'present' ? INTENDED_PUBLIC_PRESENT.test(after) : INTENDED_PUBLIC_ABSENT.test(after);
+  if (matchedAfter) {
+    failures.push({
+      path,
+      message: `fix ${fix.name} checks intended-public after its mutating send`,
+    });
+    return;
+  }
+  const requirement = mode === 'present' ? 'present' : 'absent';
+  failures.push({
+    path,
+    message: `fix ${fix.name} does not require intended-public to be ${requirement} before its mutating send`,
+  });
+}
+
+function intendedPublicMode(name: string): 'present' | 'absent' | undefined {
+  if (name === 'remove-bucket-public-access-block') {
+    return 'present';
+  }
+  if (name === 'restore-bucket-public-access-block') {
+    return 'absent';
   }
   return undefined;
 }

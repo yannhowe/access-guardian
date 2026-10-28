@@ -27,7 +27,7 @@ It may allow:
 
 - `ec2:DescribeSecurityGroupRules`
 - `ec2:RevokeSecurityGroupIngress` on security groups
-- `s3:PutBucketPublicAccessBlock` for a later fix that only turns public access off
+- `s3:PutBucketPublicAccessBlock` for the bucket public access block fixes. AWS authorizes DeletePublicAccessBlock with this same action. The only fix that may remove the block is the one for a bucket tagged intended-public=true, auto-remediate=true, and purpose=ag-demo-synthetic
 - `logs:CreateLogStream` and `logs:PutLogEvents` on `/aws/lambda/ag-fix-*`
 
 It must not allow `Authorize*`, `Delete*PublicAccessBlock`, `iam:*`, or `Put*Policy`.
