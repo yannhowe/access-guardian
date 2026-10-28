@@ -1,6 +1,6 @@
 # Intake
 
-The intake is not code in this repo. It was created by hand with the AWS CLI in account `022076688650`, region `ap-southeast-1`. There is no Terraform here, and there is no Lambda on this path. An end-to-end test on a throwaway security group was delivered successfully.
+The intake is not code in this repo. It was created by hand with the AWS CLI in `ap-southeast-1`. The account id is not stored in this repo. There is no Terraform here, and there is no Lambda on this path. An end-to-end test on a throwaway security group was delivered successfully.
 
 The webhook URL and the API key are not in this repo. The key is held only in the EventBridge connection.
 
@@ -8,7 +8,7 @@ The webhook URL and the API key are not in this repo. The key is held only in th
 
 EventBridge rule `ag-cloudtrail-sg-ingress-to-lead` on the default bus.
 
-It matches successful `AuthorizeSecurityGroupIngress` CloudTrail events in account `022076688650`. A failed call and a dry-run set `errorCode`, and those events are left out.
+It matches successful `AuthorizeSecurityGroupIngress` CloudTrail events. A failed call and a dry-run set `errorCode`, and those events are left out. This file does not document a second rule.
 
 ## Connection
 

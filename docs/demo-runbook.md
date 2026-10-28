@@ -1,13 +1,13 @@
 # Demo runbook
 
-Access Guardian watches for an open security group port and will not close it unless the change is on an allow-list, the plan is a dry-run, Yann says yes, and Yann merges the code. The bots talk. This repo holds the gates.
+Access Guardian watches an allow-listed finding and will not change AWS unless the fix is on the allow-list, the first invoke is a dry run, Yann says yes, and Yann has merged the code. The bots talk. This repo holds the gates. The three fixes on `main` are `close-open-port`, `restore-bucket-public-access-block`, and `remove-bucket-public-access-block`.
 
 Use synthetic data only. A safe group id is `sg-demo0001`. A safe account id in examples is `111122223333`. A safe source address is `203.0.113.24`. Do not show a live key, a webhook secret, or the AWS root key.
 
 ## Two ways a case reaches AG Lead
 
 1. CloudTrail. Someone calls `AuthorizeSecurityGroupIngress`. The EventBridge rule in `docs/intake.md` matches it. The API destination POSTs the structured body to the AG Lead routine webhook. No Lambda, and no code in this repo. The bot reads `eventName`, `eventTime`, `account`, `region`, `actorArn`, `sourceIp`, `groupId`, `protocol`, `fromPort`, `toPort`, `cidr`, `requestId`, `eventId`, and `source` in code. That path does not call Grok.
-2. Slack. A person writes in `#platsec-demo`. The Grok Bot channel listener receives it. No Slack code lives here. If the message is free text that code cannot parse, Lead may extract facts. If the listener already has structured fields, it does not call Grok.
+2. Slack. A person writes in `#platsec-demo` and tags `@AG-lead`. The Grok Bot channel listener receives that mention. No Slack code lives here. Yann (Slack `U0CAKUDP3L0`) is the only person whose messages count as approvals. If the message is free text that code cannot parse, Lead may extract facts. If the listener already has structured fields, it does not call Grok.
 
 A sample webhook body, all synthetic:
 
@@ -30,19 +30,18 @@ A sample webhook body, all synthetic:
 }
 ```
 
-The live account and resource names are in `docs/intake.md`. This sample uses the same fields with synthetic values. Every field arrives as a string.
+The rule, connection, destination, and role names are in `docs/intake.md`. The account id is not stored in this repo. This sample uses the same fields with synthetic values. Every field arrives as a string.
 
 If `fromPort` and `toPort` are the same single port, the starter fix can plan a revoke of that port. If they differ, this fix does not apply. The case stays with a human. The fix revokes one port, not a range.
 
 ## Bot flow
 
-1. AG Lead opens the case from the webhook body or from Slack.
-2. AG Context checks whether a change is reasonable to make now: who owns the resource, who is on call, whether a freeze is active. Context uses structured records. Context does not call Grok and does not change AWS.
-3. AG Change checks whether an approved request covers this one finding, and whether the fix key is on the allow-list. One finding, one resource. A wildcard request is too broad. If `close-open-port` is already registered, Change reuses it. If the key is allowed but not built, Change asks Builder to write it. If the key is not on the list, a human handles it. Change does not call Grok and does not run the fix.
-4. AG Lead shows Yann the plan: the Lambda `ag-fix-close-open-port`, the one action `ec2:RevokeSecurityGroupIngress`, and the dry-run result (`changed: false`). Lead does not set `apply`.
-5. Yann's yes. This is the human gate. The bot may then invoke the same Lambda with `apply` set to true. Without the yes, the invoke stays a dry run, and Builder does not start.
-6. AG Builder, a Cursor cloud agent, opens a pull request in this repo. A new fix follows `.cursor/skills/writing-remediators/SKILL.md`. The advisory reader follows `.cursor/skills/writing-extractors/SKILL.md`. The guard test must pass. Builder does not merge.
-7. The pull request goes back to AG Lead, who checks the allow-list entry, the single action, and the pasted `npm test` and `npx tsc --noEmit` output. Yann merges only when he explicitly asks. That merge is the second human gate.
+1. AG Lead opens the case from the webhook body or from a Slack message that tags `@AG-lead`. Lead keeps the case in Notion under `AG cases`.
+2. AG Context records who, why, the owner, and the intended state. Identity is merged into AG Context. Context uses structured records. Context does not call Grok and does not change AWS.
+3. AG Change picks an allow-listed fix or proposes a build. One finding, one resource. A wildcard request is too broad. If the key is already registered, Change reuses it. If the key is allowed but not built, Change asks Builder to write it. If the key is not on the list, a human handles it. Change does not call Grok and does not run the fix.
+4. AG Builder, a Cursor cloud agent, opens a pull request when a new fix is needed. A new fix follows `.cursor/skills/writing-remediators/SKILL.md`. The advisory reader follows `.cursor/skills/writing-extractors/SKILL.md`. The guard test must pass. Builder does not merge.
+5. Yann reviews and merges. That merge is the gate for code. A merge to `main` runs `.github/workflows/terraform-apply.yml`.
+6. AG Lead shows Yann the plan: the Lambda for that fix, the one IAM action, and the dry-run result (`changed: false`). Lead assumes `ag-bot-invoker` for the invoke. Lead does not set `apply` until Yann says yes. Without the yes, the invoke stays a dry run.
 
 ## Every Grok call
 
@@ -60,12 +59,14 @@ The client reads `XAI_API_KEY` from the environment. `XAI_MODEL` overrides the d
 
 ## What to show in the code
 
-- `src/fixes/allow-list.ts`: one entry, one action, one undo.
-- `src/fixes/close-open-port/`: the Lambda handler, its policy, and `fix.json`. Dry-run unless `apply` is true. A real change sets `changed: true`.
+- `src/fixes/allow-list.ts`: one entry per fix, one action, one undo line. The fix does not perform the undo.
+- `src/fixes/close-open-port/`: revoke one ingress rule. Dry-run unless `apply` is true. IAM requires `purpose=ag-demo-synthetic` and `auto-remediate=true`.
+- `src/fixes/restore-bucket-public-access-block/`: turn the four Block Public Access flags on. The handler refuses `intended-public=true`.
+- `src/fixes/remove-bucket-public-access-block/`: remove the block on `ag-demo-public-10281729` only, after the three exact tags. The SDK command is `DeletePublicAccessBlockCommand`. The IAM action is `s3:PutBucketPublicAccessBlock`.
 - `infra/main.tf`: one Terraform name per fix. The module always sets the permissions boundary.
-- `tests/fixes/close-open-port.test.ts`: a fake AWS client. Default is dry-run. One revoke when apply is set. Bad input does not call AWS.
-- `tests/guard.test.ts`: the tree passes, and a fix off the list, a second action, or an xAI call outside the client fails.
-- `src/extractors/advisory/README.md`: the advisory reader contract.
+- `tests/fixes/`: a fake AWS client per fix. Default is dry-run. One mutating call when apply is set. Bad input does not call AWS.
+- `tests/guard.test.ts`: the tree passes, and a fix off the list, a second mutating action, or an xAI call outside the client fails.
+- `src/extractors/advisory/README.md`: the advisory reader contract. Tests are `tests/extractors/advisory.test.ts`.
 - `inventory/services.json`: synthetic services and the exact npm versions they run. Teammates read it to see whether an advisory package is installed.
 
 Commands:
@@ -73,11 +74,14 @@ Commands:
 ```bash
 npm test
 npx tsc --noEmit
+terraform -chdir=infra fmt -check -recursive
+terraform -chdir=infra init -backend=false
+terraform -chdir=infra validate
 ```
 
 ## Advisory reader
 
-The advisory reader lives in `src/extractors/advisory/` and follows the writing-extractors skill. Leave the CloudTrail path on structured fields. Do not add a second Grok client. Tests mock `fetch`.
+The advisory reader lives in `src/extractors/advisory/` and follows the writing-extractors skill. Tests are `tests/extractors/advisory.test.ts`. Leave the CloudTrail path on structured fields. Do not add a second Grok client. Tests mock `fetch`.
 
 ## Service inventory
 
@@ -85,7 +89,7 @@ The advisory reader lives in `src/extractors/advisory/` and follows the writing-
 
 ## Trade-off
 
-The main remaining risk is a false "authorized" verdict. That is a missed alert. If Context or Change treats the open port as allowed when it was not, Lead does not raise it, and the rule stays. The allow-list, the dry-run, Yann's yes, and Yann's merge limit what a fix can do after a case is in motion. They do not catch a case that was dropped as authorized. Grok is not the backstop for that decision, because Grok is not asked to authorize.
+The main remaining risk is a false "authorized" verdict. That is a missed alert. If Context or Change treats the finding as allowed when it was not, Lead does not raise it, and the security group rule or the bucket setting stays. The allow-list, the dry-run, Yann's yes, and Yann's merge limit what a fix can do after a case is in motion. They do not catch a case that was dropped as authorized. Grok is not the backstop for that decision, because Grok is not asked to authorize.
 
 A smaller miss sits on the intake. The transformer reads the first permission and the first IPv4 range. Two rules, or an IPv6-only rule, may never reach the webhook. CloudTrail still has the API call. That is a missed delivery, not a false authorized verdict.
 
