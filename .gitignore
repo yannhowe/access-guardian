@@ -1,0 +1,8 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Secrets. .env.example lists names only.
+.env*
+!.env.example
