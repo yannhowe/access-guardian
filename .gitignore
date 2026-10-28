@@ -2,6 +2,12 @@ node_modules/
 dist/
 coverage/
 *.tsbuildinfo
+*.zip
+
+# Terraform local state. The remote backend is configured at init time.
+.terraform/
+*.tfstate
+*.tfstate.*
 
 # Secrets. .env.example lists names only.
 .env*

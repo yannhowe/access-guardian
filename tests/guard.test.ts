@@ -1,32 +1,21 @@
 /**
  * The guard fails closed.
- * The real tree must pass. The in-memory cases show what a bad change looks like.
+ * The real tree must pass. In-memory cases show what a bad change looks like.
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { ALLOWED_FIXES } from '../src/fixes/allow-list.js';
-import { audit, type AuditRules, type SourceFile } from '../src/guard/audit.js';
-import { MUTATING_APIS } from '../src/guard/mutating-apis.js';
+import { FIX_REGISTRY } from '../src/fixes/registry.js';
+import { audit, type AuditInput, type FixFolder, type SourceFile } from '../src/guard/audit.js';
+import { CLOSE_ONLY_ACTIONS } from '../src/guard/mutating-apis.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function markers(): string[] {
   const host = 'api.' + 'x.ai';
   return ['https://' + host, host, 'chat' + '/completions', 'XAI_' + 'API_KEY', 'XAI_' + 'MODEL'];
-}
-
-function rules(over: Partial<AuditRules> = {}): AuditRules {
-  return {
-    allowList: ALLOWED_FIXES,
-    mutatingApis: MUTATING_APIS,
-    xaiMarkers: markers(),
-    grokClientPath: 'src/grok/client.ts',
-    xaiAllowedPaths: ['src/grok/client.ts', 'tests/grok/client.test.ts'],
-    catalogPath: 'src/guard/mutating-apis.ts',
-    ...over,
-  };
 }
 
 function walk(dir: string): SourceFile[] {
@@ -47,132 +36,259 @@ function walk(dir: string): SourceFile[] {
   return out;
 }
 
-function repoFiles(): SourceFile[] {
-  return [...walk(path.join(root, 'src')), ...walk(path.join(root, 'tests'))];
+function readOptional(file: string): string | null {
+  return existsSync(file) ? readFileSync(file, 'utf8') : null;
+}
+
+function loadFixes(): FixFolder[] {
+  const dir = path.join(root, 'src/fixes');
+  const fixes: FixFolder[] = [];
+  for (const name of readdirSync(dir)) {
+    const full = path.join(dir, name);
+    if (!statSync(full).isDirectory()) {
+      continue;
+    }
+    fixes.push({
+      name,
+      handlerText: readOptional(path.join(full, 'handler.ts')),
+      policyText: readOptional(path.join(full, 'policy.json')),
+      metadataText: readOptional(path.join(full, 'fix.json')),
+      hasTest: existsSync(path.join(root, 'tests/fixes', `${name}.test.ts`)),
+    });
+  }
+  return fixes;
+}
+
+function repoInput(over: Partial<AuditInput> = {}): AuditInput {
+  return {
+    files: [...walk(path.join(root, 'src')), ...walk(path.join(root, 'tests'))],
+    fixes: loadFixes(),
+    allowList: ALLOWED_FIXES,
+    registry: FIX_REGISTRY,
+    closeOnlyActions: CLOSE_ONLY_ACTIONS,
+    xaiMarkers: markers(),
+    grokClientPath: 'src/grok/client.ts',
+    xaiAllowedPaths: ['src/grok/client.ts', 'tests/grok/client.test.ts'],
+    terraform: {
+      mainText: readFileSync(path.join(root, 'infra/main.tf'), 'utf8'),
+      moduleText: readFileSync(path.join(root, 'infra/modules/fix/main.tf'), 'utf8'),
+    },
+    ...over,
+  };
+}
+
+const HANDLER = [
+  'new DescribeSecurityGroupRulesCommand({})',
+  'new RevokeSecurityGroupIngressCommand({})',
+].join('\n');
+
+function policy(statements: Array<{ action: string; resource: string }>): string {
+  return JSON.stringify({
+    Version: '2012-10-17',
+    Statement: statements.map((statement) => ({
+      Effect: 'Allow',
+      Action: [statement.action],
+      Resource: statement.resource,
+    })),
+  });
+}
+
+const GOOD_POLICY = policy([
+  { action: 'ec2:DescribeSecurityGroupRules', resource: '*' },
+  { action: 'ec2:RevokeSecurityGroupIngress', resource: 'arn:aws:ec2:*:*:security-group/*' },
+]);
+
+function metadata(over: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    name: 'close-open-port',
+    findingKey: 'cloud:open_port',
+    action: 'ec2:RevokeSecurityGroupIngress',
+    description: 'Revoke one ingress rule on one security group',
+    callsGrok: false,
+    ...over,
+  });
+}
+
+function folder(over: Partial<FixFolder> = {}): FixFolder {
+  return {
+    name: 'close-open-port',
+    handlerText: HANDLER,
+    policyText: GOOD_POLICY,
+    metadataText: metadata(),
+    hasTest: true,
+    ...over,
+  };
 }
 
 describe('guard', () => {
   it('lists the fixes we are willing to automate', () => {
-    expect(ALLOWED_FIXES).toEqual({
-      'close-open-port': {
-        action: 'RevokeSecurityGroupIngress',
-        summary: 'Revoke one ingress rule on one security group',
-        undo: 'Authorize that same ingress rule again',
-      },
+    expect(ALLOWED_FIXES['close-open-port']).toEqual({
+      findingKey: 'cloud:open_port',
+      action: 'ec2:RevokeSecurityGroupIngress',
+      summary: 'Revoke one ingress rule on one security group',
+      undo: 'Authorize that same ingress rule again',
     });
+    for (const entry of Object.values(ALLOWED_FIXES)) {
+      expect(entry.findingKey).toMatch(/^[a-z0-9_]+:[a-z0-9_]+$/);
+      expect(entry.action).toMatch(/^[a-z0-9]+:[A-Za-z0-9]+$/);
+      expect(entry.summary.length).toBeGreaterThan(0);
+      expect(entry.undo.length).toBeGreaterThan(0);
+    }
+    expect(CLOSE_ONLY_ACTIONS).toContain('ec2:RevokeSecurityGroupIngress');
+    expect(CLOSE_ONLY_ACTIONS).toContain('s3:PutBucketPublicAccessBlock');
   });
 
   it('passes on this repo', () => {
-    expect(audit(repoFiles(), rules())).toEqual([]);
+    expect(audit(repoInput())).toEqual([]);
   });
 
-  it('fails when a fix is not on the allow-list', () => {
-    const files: SourceFile[] = [
-      {
-        path: 'src/fixes/delete-bucket.ts',
-        text: "export const ACTION = 'DeleteBucket' as const;\nawait client.send(command);\n",
-      },
-    ];
-
-    const failures = audit(files, rules());
+  it('fails when a fix folder is not on the allow-list', () => {
+    const failures = audit({
+      ...repoInput(),
+      terraform: undefined,
+      fixes: [
+        folder({
+          name: 'delete-bucket',
+          metadataText: metadata({ name: 'delete-bucket', findingKey: 'cloud:delete_bucket' }),
+        }),
+      ],
+    });
 
     expect(failures.map((failure) => failure.message)).toContain('fix delete-bucket is not on the allow-list');
   });
 
-  it('fails when a fix declares two actions', () => {
-    const files: SourceFile[] = [
-      {
-        path: 'src/fixes/close-open-port.ts',
-        text: [
-          "export const ACTION = 'RevokeSecurityGroupIngress' as const;",
-          "export const ACTION = 'AuthorizeSecurityGroupIngress' as const;",
-          'await client.send(command);',
-        ].join('\n'),
+  it('fails when handler, policy, metadata, or tests are missing', () => {
+    const failures = audit({
+      ...repoInput(),
+      terraform: undefined,
+      fixes: [folder({ handlerText: null, policyText: null, metadataText: null, hasTest: false })],
+    });
+    const messages = failures.map((failure) => failure.message);
+
+    expect(messages).toContain('fix close-open-port is missing handler.ts');
+    expect(messages).toContain('fix close-open-port is missing policy.json');
+    expect(messages).toContain('fix close-open-port is missing fix.json');
+    expect(messages).toContain('fix close-open-port is missing tests');
+  });
+
+  it.each([
+    ['ec2:AuthorizeSecurityGroupIngress'],
+    ['iam:PassRole'],
+    ['s3:PutBucketPolicy'],
+    ['s3:DeleteBucketPublicAccessBlock'],
+  ])('blocks %s even if someone adds it to the close-only list', (action) => {
+    const failures = audit({
+      ...repoInput(),
+      terraform: undefined,
+      closeOnlyActions: [...CLOSE_ONLY_ACTIONS, action],
+      fixes: [
+        folder({
+          policyText: policy([
+            { action: 'ec2:DescribeSecurityGroupRules', resource: '*' },
+            { action, resource: 'arn:aws:ec2:*:*:security-group/*' },
+          ]),
+          handlerText: HANDLER,
+        }),
+      ],
+    });
+
+    expect(failures.some((failure) => failure.message === `blocked action ${action}`)).toBe(true);
+  });
+
+  it('blocks a wildcard action', () => {
+    const failures = audit({
+      ...repoInput(),
+      terraform: undefined,
+      fixes: [
+        folder({
+          policyText: policy([
+            { action: 'ec2:DescribeSecurityGroupRules', resource: '*' },
+            { action: 'ec2:*', resource: '*' },
+          ]),
+        }),
+      ],
+    });
+
+    expect(failures.some((failure) => failure.message.includes('wildcard action'))).toBe(true);
+  });
+
+  it('rejects Resource * on a mutating action unless metadata justifies it', () => {
+    const open = policy([
+      { action: 'ec2:DescribeSecurityGroupRules', resource: '*' },
+      { action: 'ec2:RevokeSecurityGroupIngress', resource: '*' },
+    ]);
+    const denied = audit({
+      ...repoInput(),
+      terraform: undefined,
+      fixes: [folder({ policyText: open })],
+    });
+    expect(denied.some((failure) => failure.message.includes('Resource * without justification'))).toBe(true);
+
+    const allowed = audit({
+      ...repoInput(),
+      terraform: undefined,
+      fixes: [
+        folder({
+          policyText: open,
+          metadataText: metadata({
+            wildcardResourceJustification: 'IAM cannot scope this action to one resource.',
+          }),
+        }),
+      ],
+    });
+    expect(allowed.some((failure) => failure.message.includes('Resource *'))).toBe(false);
+  });
+
+  it('fails when the handler calls an operation the policy does not list', () => {
+    const failures = audit({
+      ...repoInput(),
+      terraform: undefined,
+      fixes: [
+        folder({
+          handlerText: `${HANDLER}\nnew DeleteSecurityGroupCommand({})`,
+        }),
+      ],
+    });
+    const messages = failures.map((failure) => failure.message);
+
+    expect(messages.some((message) => message.includes('DeleteSecurityGroup'))).toBe(true);
+    expect(messages.some((message) => message.includes('close calls'))).toBe(true);
+  });
+
+  it('fails when a fix folder has no Terraform entry', () => {
+    const failures = audit({
+      ...repoInput(),
+      terraform: {
+        mainText: 'locals { fix_names = toset([]) }',
+        moduleText: 'permissions_boundary = var.permissions_boundary_arn',
       },
-    ];
+    });
 
-    const messages = audit(files, rules()).map((failure) => failure.message);
+    expect(failures.map((failure) => failure.message)).toContain(
+      'fix close-open-port has no Terraform entry',
+    );
+  });
 
-    expect(messages).toContain('fix close-open-port declares 2 actions');
-    expect(messages.some((message) => message.includes('more than one action'))).toBe(true);
+  it('fails when the module omits the permissions boundary', () => {
+    const mainText = readFileSync(path.join(root, 'infra/main.tf'), 'utf8');
+    const failures = audit({
+      ...repoInput(),
+      terraform: { mainText, moduleText: 'resource "aws_iam_role" "fix" {}' },
+    });
+
+    expect(failures.map((failure) => failure.message)).toContain(
+      'fix module does not set permissions_boundary',
+    );
   });
 
   it('fails when an xAI call sits outside the Grok client', () => {
     const endpoint = markers()[0] ?? '';
-    const chat = 'chat' + '/completions';
-    const files: SourceFile[] = [
-      {
-        path: 'src/extractors/advisory/read.ts',
-        text: `await fetch('${endpoint}/v1/${chat}');\n`,
-      },
-    ];
+    const failures = audit({
+      ...repoInput(),
+      files: [{ path: 'src/extractors/advisory/read.ts', text: `const url = '${endpoint}';\n` }],
+    });
 
-    const failures = audit(files, rules());
-
-    expect(failures.length).toBeGreaterThan(0);
-    expect(failures.every((failure) => failure.path === 'src/extractors/advisory/read.ts')).toBe(true);
-  });
-
-  it('allows the Grok client to name the endpoint', () => {
-    const chat = 'chat' + '/completions';
-    const keyName = 'XAI_' + 'API_KEY';
-    const modelName = 'XAI_' + 'MODEL';
-    const files: SourceFile[] = [
-      {
-        path: 'src/grok/client.ts',
-        text: `const url = '${markers()[0]}/v1/${chat}';\nprocess.env.${keyName};\nprocess.env.${modelName};\n`,
-      },
-    ];
-
-    expect(audit(files, rules())).toEqual([]);
-  });
-
-  it('fails when a mutating command is not on the allow-list', () => {
-    const files: SourceFile[] = [
-      {
-        path: 'src/fixes/close-open-port.ts',
-        text: [
-          "export const ACTION = 'RevokeSecurityGroupIngress' as const;",
-          'RevokeSecurityGroupIngress',
-          'await client.send(command);',
-          'new ' + 'DeleteSecurityGroupCommand({})',
-        ].join('\n'),
-      },
-    ];
-
-    const messages = audit(files, rules()).map((failure) => failure.message);
-
-    expect(messages.some((message) => message.includes('DeleteSecurityGroupCommand'))).toBe(true);
-  });
-
-  it('allows a Describe command', () => {
-    const files: SourceFile[] = [
-      {
-        path: 'src/fixes/close-open-port.ts',
-        text: [
-          "export const ACTION = 'RevokeSecurityGroupIngress' as const;",
-          'RevokeSecurityGroupIngress',
-          'await client.send(command);',
-          'new ' + 'DescribeSecurityGroupsCommand({})',
-        ].join('\n'),
-      },
-    ];
-
-    expect(audit(files, rules())).toEqual([]);
-  });
-
-  it('fails when a Grok call does not say what it decides', () => {
-    const files: SourceFile[] = [
-      {
-        path: 'src/extractors/advisory/read.ts',
-        text: 'const result = await extract(opts);\n',
-      },
-    ];
-
-    const messages = audit(files, rules()).map((failure) => failure.message);
-
-    expect(messages).toContain('Grok call is missing a "What Grok decides:" note');
-    expect(messages).toContain('Grok call is missing a "What code decides:" note');
+    expect(failures.some((failure) => failure.path === 'src/extractors/advisory/read.ts')).toBe(true);
   });
 
   it('rejects an em dash in docs and code', () => {
@@ -181,7 +297,7 @@ describe('guard', () => {
 
     function scan(dir: string): void {
       for (const name of readdirSync(dir)) {
-        if (name === 'node_modules' || name === '.git') {
+        if (name === 'node_modules' || name === '.git' || name === 'dist' || name === '.terraform') {
           continue;
         }
         const full = path.join(dir, name);
@@ -200,5 +316,22 @@ describe('guard', () => {
 
     scan(root);
     expect(hits).toEqual([]);
+  });
+
+  it('ships project rules and always applies the core rule', () => {
+    const dir = path.join(root, '.cursor/rules');
+    const names = ['core.mdc', 'fixes.mdc', 'grok.mdc', 'protected.mdc'];
+    for (const name of names) {
+      const text = readFileSync(path.join(dir, name), 'utf8');
+      expect(text.startsWith('---\n')).toBe(true);
+      expect(text).toContain('\n---\n');
+    }
+    const core = readFileSync(path.join(dir, 'core.mdc'), 'utf8');
+    const front = core.split('\n---\n')[0] ?? '';
+    expect(front).toMatch(/alwaysApply:\s*true/);
+    for (const name of names.slice(1)) {
+      const text = readFileSync(path.join(dir, name), 'utf8');
+      expect(text.split('\n---\n')[0] ?? '').toMatch(/alwaysApply:\s*false/);
+    }
   });
 });

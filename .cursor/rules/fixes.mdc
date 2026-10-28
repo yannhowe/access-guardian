@@ -1,0 +1,15 @@
+---
+description: How to add one defensive fix
+globs: src/fixes/*/**,infra/main.tf
+alwaysApply: false
+---
+
+# Fixes
+
+One pull request adds exactly one fix: the folder `src/fixes/<name>/`, one quoted name in `local.fix_names` in `infra/main.tf`, and one allow-list line. Flag that allow-list line at the top of the pull request.
+
+The handler makes exactly one hardcoded mutating call, and that call is close-only. `policy.json` uses one exact action that is already on the close-only list. No wildcards. Scope each resource as tightly as IAM allows.
+
+`apply` defaults to false. Validate the input strictly. A second run must be safe and return `changed: false` when the desired state already holds. Return the real AWS error code and message.
+
+Tests must show the one call, a rejected bad input, that no other resource is touched, and a second run. Follow `.cursor/skills/writing-remediators/SKILL.md` for the folder shape.
