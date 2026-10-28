@@ -2,9 +2,10 @@
  * Lambda ag-fix-close-open-port.
  *
  * One close call: ec2:RevokeSecurityGroupIngress.
- * Two reads: ec2:DescribeSecurityGroupRules, so a missing rule returns
- * changed: false instead of revoking, and ec2:DescribeSecurityGroups, which
- * returns the group tags.
+ * Two reads: ec2:DescribeSecurityGroupRules, so a missing tcp or udp rule
+ * returns changed: false instead of revoking, and ec2:DescribeSecurityGroups,
+ * which returns the group tags. Protocol -1 with zero matches, or with more
+ * than one match, is refused and does not revoke.
  *
  * apply defaults to false. Only a boolean true revokes. The bot sets that
  * after Yann's yes. This file does not call Grok.
@@ -12,7 +13,11 @@
  * What Grok decides: nothing.
  * What code decides: whether the input is one rule, whether that rule is
  * present, whether the group has tag auto-remediate set to true, and whether
- * the one revoke is sent.
+ * the one revoke is sent. Protocol -1 has no port. For that protocol, code
+ * revokes only when exactly one ingress rule has that protocol and CIDR.
+ * classifyIngress runs before that revoke. A world-open -1 rule is a finding,
+ * including when the group is tagged intended-public=true. When that tag is
+ * set and the rule is not a finding, the revoke is refused.
  *
  * The role only revokes a group tagged purpose=ag-demo-synthetic and
  * auto-remediate=true. IAM enforces both tags. The handler also refuses,
@@ -24,19 +29,30 @@ import {
   EC2Client,
   RevokeSecurityGroupIngressCommand,
 } from '@aws-sdk/client-ec2';
+import { classifyIngress } from '../../policy/classify-ingress.js';
 
 export const ACTION = 'ec2:RevokeSecurityGroupIngress' as const;
 
 const AUTO_REMEDIATE_TAG_KEY = 'auto-remediate';
 const AUTO_REMEDIATE_TAG_VALUE = 'true';
+const INTENDED_PUBLIC_TAG_KEY = 'intended-public';
+const INTENDED_PUBLIC_TAG_VALUE = 'true';
 
 function hasAutoRemediateTag(tags: readonly unknown[]): boolean {
+  return hasExactTag(tags, AUTO_REMEDIATE_TAG_KEY, AUTO_REMEDIATE_TAG_VALUE);
+}
+
+function hasIntendedPublicTag(tags: readonly unknown[]): boolean {
+  return hasExactTag(tags, INTENDED_PUBLIC_TAG_KEY, INTENDED_PUBLIC_TAG_VALUE);
+}
+
+function hasExactTag(tags: readonly unknown[], key: string, value: string): boolean {
   for (const tag of tags) {
     if (typeof tag !== 'object' || tag === null) {
       continue;
     }
     const record = tag as { Key?: unknown; Value?: unknown };
-    if (record.Key === AUTO_REMEDIATE_TAG_KEY && record.Value === AUTO_REMEDIATE_TAG_VALUE) {
+    if (record.Key === key && record.Value === value) {
       return true;
     }
   }
@@ -50,33 +66,40 @@ export type AwsClient = {
   send(command: unknown): Promise<unknown>;
 };
 
+type PortRule = {
+  protocol: 'tcp' | 'udp';
+  port: number;
+};
+
+type AllTrafficRule = {
+  protocol: '-1';
+};
+
 export type CloseOpenPortInput = {
   caseId: string;
   securityGroupId: string;
-  protocol: 'tcp' | 'udp';
-  port: number;
   cidr: string;
   apply: boolean;
-};
+} & (PortRule | AllTrafficRule);
 
 export type FixResult =
-  | {
+  | ({
       ok: true;
       changed: boolean;
       dryRun: boolean;
       action: typeof ACTION;
       caseId: string;
       securityGroupId: string;
-      protocol: 'tcp' | 'udp';
-      port: number;
       cidr: string;
       reason: 'dry_run' | 'already_closed' | 'revoked';
-    }
+    } & (PortRule | AllTrafficRule))
   | {
       ok: false;
       changed: false;
       errorCode: string;
       errorMessage: string;
+      status?: 'refused';
+      reason?: string;
     };
 
 type Planned = CloseOpenPortInput;
@@ -85,9 +108,16 @@ type LiveRule = {
   groupId: string;
   egress: boolean;
   protocol: string;
-  fromPort: number;
-  toPort: number;
+  fromPort: number | null;
+  toPort: number | null;
   cidr: string;
+};
+
+type IpPermissionInput = {
+  IpProtocol: string;
+  FromPort?: number;
+  ToPort?: number;
+  IpRanges: Array<{ CidrIp: string }>;
 };
 
 export async function handler(event: unknown): Promise<FixResult> {
@@ -129,6 +159,9 @@ export async function handleCloseOpenPort(event: unknown, client: AwsClient): Pr
 
   const matches = rules.filter((rule) => isTarget(rule, input));
   if (matches.length > 1) {
+    if (input.protocol === '-1') {
+      return refused('more than one ingress rule matches this protocol and CIDR');
+    }
     return {
       ok: false,
       changed: false,
@@ -137,17 +170,23 @@ export async function handleCloseOpenPort(event: unknown, client: AwsClient): Pr
     };
   }
 
-  const body = {
-    action: ACTION,
-    caseId: input.caseId,
-    securityGroupId: input.securityGroupId,
-    protocol: input.protocol,
-    port: input.port,
-    cidr: input.cidr,
-  };
+  const body = ruleBody(input);
 
   if (matches.length === 0) {
+    if (input.protocol === '-1') {
+      return refused('no ingress rule matches this protocol and CIDR');
+    }
     return { ok: true, changed: false, dryRun: !input.apply, ...body, reason: 'already_closed' };
+  }
+
+  const matched = matches[0];
+  if (matched === undefined) {
+    return {
+      ok: false,
+      changed: false,
+      errorCode: 'InvalidResponse',
+      errorMessage: 'DescribeSecurityGroupRules did not return the matching rule',
+    };
   }
 
   const tagged = await readGroupTags(client, input.securityGroupId);
@@ -163,6 +202,10 @@ export async function handleCloseOpenPort(event: unknown, client: AwsClient): Pr
     };
   }
 
+  if (input.protocol === '-1' && !allTrafficRevokeAllowed(matched, tagged.tags)) {
+    return refused('security group tagged intended-public=true is left unchanged');
+  }
+
   if (!input.apply) {
     return { ok: true, changed: false, dryRun: true, ...body, reason: 'dry_run' };
   }
@@ -171,14 +214,7 @@ export async function handleCloseOpenPort(event: unknown, client: AwsClient): Pr
     await client.send(
       new RevokeSecurityGroupIngressCommand({
         GroupId: input.securityGroupId,
-        IpPermissions: [
-          {
-            IpProtocol: input.protocol,
-            FromPort: input.port,
-            ToPort: input.port,
-            IpRanges: [{ CidrIp: input.cidr }],
-          },
-        ],
+        IpPermissions: [ipPermission(input)],
       }),
     );
   } catch (err) {
@@ -200,10 +236,19 @@ function parseEvent(event: unknown): { ok: true; value: Planned } | { ok: false;
   if (typeof record.securityGroupId !== 'string' || !GROUP_ID.test(record.securityGroupId)) {
     return { ok: false, message: 'securityGroupId must look like sg- and then 8 to 17 lowercase letters or digits' };
   }
-  if (record.protocol !== 'tcp' && record.protocol !== 'udp') {
-    return { ok: false, message: 'protocol must be tcp or udp' };
+  if (record.protocol !== 'tcp' && record.protocol !== 'udp' && record.protocol !== '-1') {
+    return { ok: false, message: 'protocol must be tcp, udp, or -1' };
   }
-  if (typeof record.port !== 'number' || !Number.isInteger(record.port) || record.port < 0 || record.port > 65535) {
+  if (record.protocol === '-1') {
+    if ('port' in record) {
+      return { ok: false, message: 'protocol -1 does not take a port' };
+    }
+  } else if (
+    typeof record.port !== 'number' ||
+    !Number.isInteger(record.port) ||
+    record.port < 0 ||
+    record.port > 65535
+  ) {
     return { ok: false, message: 'port must be an integer from 0 to 65535' };
   }
   if (typeof record.cidr !== 'string' || !isIpv4Cidr(record.cidr)) {
@@ -213,15 +258,33 @@ function parseEvent(event: unknown): { ok: true; value: Planned } | { ok: false;
     return { ok: false, message: 'apply must be a boolean' };
   }
 
+  const apply = record.apply === true;
+  if (record.protocol === '-1') {
+    return {
+      ok: true,
+      value: {
+        caseId: record.caseId,
+        securityGroupId: record.securityGroupId,
+        protocol: '-1',
+        cidr: record.cidr,
+        apply,
+      },
+    };
+  }
+
+  const port = record.port;
+  if (typeof port !== 'number') {
+    return { ok: false, message: 'port must be an integer from 0 to 65535' };
+  }
   return {
     ok: true,
     value: {
       caseId: record.caseId,
       securityGroupId: record.securityGroupId,
       protocol: record.protocol,
-      port: record.port,
+      port,
       cidr: record.cidr,
-      apply: record.apply === true,
+      apply,
     },
   };
 }
@@ -256,28 +319,131 @@ function readRule(item: unknown): LiveRule | 'skip' | 'bad' {
   if (typeof rule.GroupId !== 'string' || typeof rule.IpProtocol !== 'string' || typeof rule.IsEgress !== 'boolean') {
     return 'bad';
   }
-  if (typeof rule.FromPort !== 'number' || typeof rule.ToPort !== 'number' || typeof rule.CidrIpv4 !== 'string') {
+  if (typeof rule.CidrIpv4 !== 'string') {
+    return 'skip';
+  }
+  const ports = readPorts(rule.FromPort, rule.ToPort);
+  if (ports === 'skip') {
+    if (rule.IpProtocol === '-1' && portAbsent(rule.FromPort) && portAbsent(rule.ToPort)) {
+      return {
+        groupId: rule.GroupId,
+        egress: rule.IsEgress,
+        protocol: rule.IpProtocol,
+        fromPort: null,
+        toPort: null,
+        cidr: rule.CidrIpv4,
+      };
+    }
     return 'skip';
   }
   return {
     groupId: rule.GroupId,
     egress: rule.IsEgress,
     protocol: rule.IpProtocol,
-    fromPort: rule.FromPort,
-    toPort: rule.ToPort,
+    fromPort: ports.fromPort,
+    toPort: ports.toPort,
     cidr: rule.CidrIpv4,
   };
 }
 
+function readPorts(fromPort: unknown, toPort: unknown): { fromPort: number; toPort: number } | 'skip' {
+  if (typeof fromPort !== 'number' || typeof toPort !== 'number') {
+    return 'skip';
+  }
+  return { fromPort, toPort };
+}
+
+function portAbsent(value: unknown): boolean {
+  return value === undefined || value === null;
+}
+
 function isTarget(rule: LiveRule, target: Planned): boolean {
-  return (
-    rule.groupId === target.securityGroupId &&
-    rule.egress === false &&
-    rule.protocol === target.protocol &&
-    rule.fromPort === target.port &&
-    rule.toPort === target.port &&
-    rule.cidr === target.cidr
+  if (rule.groupId !== target.securityGroupId || rule.egress !== false || rule.cidr !== target.cidr) {
+    return false;
+  }
+  if (target.protocol === '-1') {
+    return rule.protocol === '-1';
+  }
+  return rule.protocol === target.protocol && rule.fromPort === target.port && rule.toPort === target.port;
+}
+
+/**
+ * Protocol -1 is all traffic. IpPermission does not require a port range
+ * for that protocol. The revoke omits FromPort and ToPort. A described
+ * rule may still report those ports as -1, and that rule still matches.
+ */
+function ipPermission(input: Planned): IpPermissionInput {
+  const ranges = [{ CidrIp: input.cidr }];
+  if (input.protocol === '-1') {
+    return { IpProtocol: '-1', IpRanges: ranges };
+  }
+  return {
+    IpProtocol: input.protocol,
+    FromPort: input.port,
+    ToPort: input.port,
+    IpRanges: ranges,
+  };
+}
+
+function ruleBody(input: Planned): {
+  action: typeof ACTION;
+  caseId: string;
+  securityGroupId: string;
+  cidr: string;
+} & (PortRule | AllTrafficRule) {
+  const common = {
+    action: ACTION,
+    caseId: input.caseId,
+    securityGroupId: input.securityGroupId,
+    cidr: input.cidr,
+  };
+  if (input.protocol === '-1') {
+    return { ...common, protocol: '-1' };
+  }
+  return { ...common, protocol: input.protocol, port: input.port };
+}
+
+/**
+ * classifyIngress runs before the revoke. A world-open -1 rule is a finding,
+ * so intended-public=true does not block it. Any other -1 rule on a group
+ * with that tag is left unchanged.
+ */
+function allTrafficRevokeAllowed(rule: LiveRule, tags: readonly GroupTag[]): boolean {
+  const verdict = classifyIngress(
+    {
+      protocol: rule.protocol,
+      fromPort: rule.fromPort,
+      toPort: rule.toPort,
+      ipv4Cidrs: [rule.cidr],
+      ipv6Cidrs: [],
+    },
+    securityGroupTags(tags),
   );
+  if (hasIntendedPublicTag(tags) && verdict !== 'finding') {
+    return false;
+  }
+  return true;
+}
+
+function securityGroupTags(tags: readonly GroupTag[]): Array<{ key: string; value: string }> {
+  const mapped: Array<{ key: string; value: string }> = [];
+  for (const tag of tags) {
+    if (typeof tag.Key === 'string' && typeof tag.Value === 'string') {
+      mapped.push({ key: tag.Key, value: tag.Value });
+    }
+  }
+  return mapped;
+}
+
+function refused(reason: string): FixResult {
+  return {
+    ok: false,
+    changed: false,
+    errorCode: 'Refused',
+    errorMessage: reason,
+    status: 'refused',
+    reason,
+  };
 }
 
 type GroupTag = { Key?: unknown; Value?: unknown };

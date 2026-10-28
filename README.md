@@ -126,7 +126,7 @@ Each fix Lambda has its own role, `ag-fix-<name>`. The IAM tag conditions are in
 
 | Folder and function | Finding key | IAM action | What the handler does |
 | --- | --- | --- | --- |
-| `close-open-port`, function `ag-fix-close-open-port` | `cloud:open_port` | `ec2:RevokeSecurityGroupIngress` | Revokes one ingress rule on one security group. Protocol is `tcp` or `udp`, one port, one IPv4 CIDR. |
+| `close-open-port`, function `ag-fix-close-open-port` | `cloud:open_port` | `ec2:RevokeSecurityGroupIngress` | Revokes one ingress rule on one security group. Protocol is `tcp` or `udp` with one port, or `-1` with no port, and one IPv4 CIDR. |
 | `restore-bucket-public-access-block`, function `ag-fix-restore-bucket-public-access-block` | `cloud:s3_public_access_block_removed` | `s3:PutBucketPublicAccessBlock` | Turns on all four Block Public Access flags for one bucket whose name starts with `ag-demo-`. |
 | `remove-bucket-public-access-block`, function `ag-fix-remove-bucket-public-access-block` | `cloud:s3_public_access_block_drift_intended_public` | `s3:PutBucketPublicAccessBlock` | Removes Block Public Access on bucket `ag-demo-public-10281729` only. The SDK call is `DeletePublicAccessBlockCommand`. AWS authorizes that API with `s3:PutBucketPublicAccessBlock`. |
 
@@ -144,7 +144,7 @@ A fix calls Grok only when `fix.json` says `callsGrok` is true. All three say `f
 
 Taken from each `policy.json` and handler.
 
-- **`ag-fix-close-open-port`.** The revoke statement allows `ec2:RevokeSecurityGroupIngress` on `arn:aws:ec2:*:*:security-group/*` only when both `aws:ResourceTag/auto-remediate` is `true` and `aws:ResourceTag/purpose` is `ag-demo-synthetic`. The two read actions have no tag condition and use `Resource` `*`. The handler checks `auto-remediate=true` before a revoke, including a dry run that would revoke. The handler does not check `purpose`.
+- **`ag-fix-close-open-port`.** The revoke statement allows `ec2:RevokeSecurityGroupIngress` on `arn:aws:ec2:*:*:security-group/*` only when both `aws:ResourceTag/auto-remediate` is `true` and `aws:ResourceTag/purpose` is `ag-demo-synthetic`. The two read actions have no tag condition and use `Resource` `*`. The handler checks `auto-remediate=true` before a revoke, including a dry run that would revoke. The handler does not check `purpose`. For protocol `-1`, it calls `classifyIngress` before the revoke. A world-open `-1` rule is a finding, including when the group is tagged `intended-public=true`. A `-1` rule that is not a finding is refused when that tag is set.
 - **`ag-fix-restore-bucket-public-access-block`.** Both statements use `arn:aws:s3:::ag-demo-*`. Neither statement has a tag condition. The handler requires `purpose=ag-demo-synthetic` and `auto-remediate=true`. It refuses a bucket that has `intended-public=true` and leaves that bucket unchanged.
 - **`ag-fix-remove-bucket-public-access-block`.** Both statements use `arn:aws:s3:::ag-demo-public-10281729`. The mutating statement requires `aws:ResourceTag/intended-public` to be `true`. The read statement has no tag condition. The handler requires `intended-public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic` before the delete. It does not read case text. The intended state comes from `intended-public=true`.
 
