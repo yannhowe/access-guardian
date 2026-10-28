@@ -8,14 +8,14 @@
  * actions the policy lists. Every allow-listed handler declares the
  * auto-remediate tag key and value, and calls hasAutoRemediateTag( before
  * its one mutating send. The two bucket public access block fixes also
- * check intended-public before that send. remove-bucket-public-access-block
+ * check public before that send. remove-bucket-public-access-block
  * requires the tag to be present. restore-bucket-public-access-block
  * requires the tag to be absent.
  *
  * DeletePublicAccessBlockCommand and DeleteBucketPublicAccessBlockCommand
  * are blocked in every handler. The one exception is
  * src/fixes/remove-bucket-public-access-block/handler.ts, and only when
- * that handler checks intended-public=true, auto-remediate=true, and
+ * that handler checks public=true, auto-remediate=true, and
  * purpose=ag-demo-synthetic before the send. The checks are exact and
  * case-sensitive. An import or assignment that renames either command
  * fails. IAM action names DeletePublicAccessBlock and
@@ -366,7 +366,7 @@ function scanFix(fix: FixFolder, input: AuditInput, failures: AuditFailure[]): v
 
   if (allowed !== undefined) {
     scanAutoRemediateTag(fix, failures);
-    scanIntendedPublicTag(fix, failures);
+    scanPublicTag(fix, failures);
   }
 }
 
@@ -610,19 +610,19 @@ function firstTagCallIndex(text: string): number | undefined {
   return undefined;
 }
 
-const INTENDED_PUBLIC_TAG_KEY_DECL = "const INTENDED_PUBLIC_TAG_KEY = 'intended-public'";
-const INTENDED_PUBLIC_TAG_VALUE_DECL = "const INTENDED_PUBLIC_TAG_VALUE = 'true'";
-const INTENDED_PUBLIC_PRESENT = /if\s*\(\s*!\s*hasIntendedPublicTag\s*\(/;
-const INTENDED_PUBLIC_ABSENT = /if\s*\(\s*hasIntendedPublicTag\s*\(/;
+const PUBLIC_TAG_KEY_DECL = "const PUBLIC_TAG_KEY = 'public'";
+const PUBLIC_TAG_VALUE_DECL = "const PUBLIC_TAG_VALUE = 'true'";
+const PUBLIC_TAG_PRESENT = /if\s*\(\s*!\s*hasPublicTag\s*\(/;
+const PUBLIC_TAG_ABSENT = /if\s*\(\s*hasPublicTag\s*\(/;
 
 /**
- * remove-bucket-public-access-block must refuse unless intended-public=true
+ * remove-bucket-public-access-block must refuse unless public=true
  * is present. restore-bucket-public-access-block must refuse when that tag
  * is present. The if form has to appear before the mutating command so the
  * guard can see which way the check goes.
  */
-function scanIntendedPublicTag(fix: FixFolder, failures: AuditFailure[]): void {
-  const mode = intendedPublicMode(fix.name);
+function scanPublicTag(fix: FixFolder, failures: AuditFailure[]): void {
+  const mode = publicTagMode(fix.name);
   if (mode === undefined) {
     return;
   }
@@ -631,16 +631,16 @@ function scanIntendedPublicTag(fix: FixFolder, failures: AuditFailure[]): void {
     return;
   }
   const path = `src/fixes/${fix.name}/handler.ts`;
-  if (!text.includes(INTENDED_PUBLIC_TAG_KEY_DECL)) {
+  if (!text.includes(PUBLIC_TAG_KEY_DECL)) {
     failures.push({
       path,
-      message: `fix ${fix.name} does not declare const INTENDED_PUBLIC_TAG_KEY = 'intended-public'`,
+      message: `fix ${fix.name} does not declare const PUBLIC_TAG_KEY = 'public'`,
     });
   }
-  if (!text.includes(INTENDED_PUBLIC_TAG_VALUE_DECL)) {
+  if (!text.includes(PUBLIC_TAG_VALUE_DECL)) {
     failures.push({
       path,
-      message: `fix ${fix.name} does not declare const INTENDED_PUBLIC_TAG_VALUE = 'true'`,
+      message: `fix ${fix.name} does not declare const PUBLIC_TAG_VALUE = 'true'`,
     });
   }
 
@@ -650,26 +650,26 @@ function scanIntendedPublicTag(fix: FixFolder, failures: AuditFailure[]): void {
   }
   const before = text.slice(0, mutatingAt);
   const after = text.slice(mutatingAt);
-  const matchedBefore = mode === 'present' ? INTENDED_PUBLIC_PRESENT.test(before) : INTENDED_PUBLIC_ABSENT.test(before);
+  const matchedBefore = mode === 'present' ? PUBLIC_TAG_PRESENT.test(before) : PUBLIC_TAG_ABSENT.test(before);
   if (matchedBefore) {
     return;
   }
-  const matchedAfter = mode === 'present' ? INTENDED_PUBLIC_PRESENT.test(after) : INTENDED_PUBLIC_ABSENT.test(after);
+  const matchedAfter = mode === 'present' ? PUBLIC_TAG_PRESENT.test(after) : PUBLIC_TAG_ABSENT.test(after);
   if (matchedAfter) {
     failures.push({
       path,
-      message: `fix ${fix.name} checks intended-public after its mutating send`,
+      message: `fix ${fix.name} checks public=true after its mutating send`,
     });
     return;
   }
   const requirement = mode === 'present' ? 'present' : 'absent';
   failures.push({
     path,
-    message: `fix ${fix.name} does not require intended-public to be ${requirement} before its mutating send`,
+    message: `fix ${fix.name} does not require public=true to be ${requirement} before its mutating send`,
   });
 }
 
-function intendedPublicMode(name: string): 'present' | 'absent' | undefined {
+function publicTagMode(name: string): 'present' | 'absent' | undefined {
   if (name === 'remove-bucket-public-access-block') {
     return 'present';
   }
@@ -738,10 +738,10 @@ type DeleteTagGate = {
 
 const DELETE_TAG_GATES: readonly DeleteTagGate[] = [
   {
-    label: 'intended-public=true',
-    keyDecl: "const INTENDED_PUBLIC_TAG_KEY = 'intended-public'",
-    valueDecl: "const INTENDED_PUBLIC_TAG_VALUE = 'true'",
-    call: /if\s*\(\s*!\s*hasIntendedPublicTag\s*\(/,
+    label: 'public=true',
+    keyDecl: "const PUBLIC_TAG_KEY = 'public'",
+    valueDecl: "const PUBLIC_TAG_VALUE = 'true'",
+    call: /if\s*\(\s*!\s*hasPublicTag\s*\(/,
   },
   {
     label: 'auto-remediate=true',

@@ -11,8 +11,9 @@
  *
  * What Grok decides: nothing.
  * What code decides: whether the input is one rule, whether that rule is
- * present, whether the group has tag auto-remediate set to true, and whether
- * the one revoke is sent.
+ * present, whether the group has tag auto-remediate set to true, whether
+ * classifyIngress says the named rule is a finding, and whether the one
+ * revoke is sent.
  *
  * The role only revokes a group tagged purpose=ag-demo-synthetic and
  * auto-remediate=true. IAM enforces both tags. The handler also refuses,
@@ -24,6 +25,7 @@ import {
   EC2Client,
   RevokeSecurityGroupIngressCommand,
 } from '@aws-sdk/client-ec2';
+import { classifyIngress, type SecurityGroupTag } from '../../policy/classify-ingress.js';
 
 export const ACTION = 'ec2:RevokeSecurityGroupIngress' as const;
 
@@ -77,6 +79,18 @@ export type FixResult =
       changed: false;
       errorCode: string;
       errorMessage: string;
+    }
+  | {
+      ok: false;
+      changed: false;
+      status: 'refused';
+      reason: 'rule is not a finding under the port rule';
+      action: typeof ACTION;
+      caseId: string;
+      securityGroupId: string;
+      protocol: 'tcp' | 'udp';
+      port: number;
+      cidr: string;
     };
 
 type Planned = CloseOpenPortInput;
@@ -160,6 +174,26 @@ export async function handleCloseOpenPort(event: unknown, client: AwsClient): Pr
       changed: false,
       errorCode: 'MissingAutoRemediateTag',
       errorMessage: 'security group must have tag auto-remediate set to true',
+    };
+  }
+
+  const verdict = classifyIngress(
+    {
+      protocol: input.protocol,
+      fromPort: input.port,
+      toPort: input.port,
+      ipv4Cidrs: [input.cidr],
+      ipv6Cidrs: [],
+    },
+    ingressTags(tagged.tags),
+  );
+  if (verdict === 'ok') {
+    return {
+      ok: false,
+      changed: false,
+      status: 'refused',
+      reason: 'rule is not a finding under the port rule',
+      ...body,
     };
   }
 
@@ -281,6 +315,16 @@ function isTarget(rule: LiveRule, target: Planned): boolean {
 }
 
 type GroupTag = { Key?: unknown; Value?: unknown };
+
+function ingressTags(tags: readonly GroupTag[]): SecurityGroupTag[] {
+  const out: SecurityGroupTag[] = [];
+  for (const tag of tags) {
+    if (typeof tag.Key === 'string' && typeof tag.Value === 'string') {
+      out.push({ key: tag.Key, value: tag.Value });
+    }
+  }
+  return out;
+}
 
 async function readGroupTags(
   client: AwsClient,

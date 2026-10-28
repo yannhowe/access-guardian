@@ -26,11 +26,11 @@ const EVENT = { bucket: TARGET_BUCKET };
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const HANDLER_PATH = path.join(ROOT, 'src/fixes/remove-bucket-public-access-block/handler.ts');
 const REQUIRED_MESSAGE =
-  'bucket must have tags intended-public=true, auto-remediate=true, and purpose=ag-demo-synthetic';
+  'bucket must have tags public=true, auto-remediate=true, and purpose=ag-demo-synthetic';
 
 const REQUIRED_TAGS = {
   TagSet: [
-    { Key: 'intended-public', Value: 'true' },
+    { Key: 'public', Value: 'true' },
     { Key: 'auto-remediate', Value: 'true' },
     { Key: 'purpose', Value: 'ag-demo-synthetic' },
   ],
@@ -112,13 +112,13 @@ describe('remove-bucket-public-access-block handler', () => {
     expect(OPERATION).toBe('DeletePublicAccessBlock');
     expect(TARGET_BUCKET).toBe('ag-demo-public-10281729');
     expect(ALLOWED_FIXES['remove-bucket-public-access-block']).toEqual({
-      findingKey: 'cloud:s3_public_access_block_drift_intended_public',
+      findingKey: 'cloud:s3_public_access_block_drift_public',
       action: ACTION,
-      summary: 'Remove Block Public Access on the one bucket tagged intended-public=true',
+      summary: 'Remove Block Public Access on the one bucket tagged public=true',
       undo: 'There is no undo',
     });
     expect(FIX_REGISTRY['remove-bucket-public-access-block']).toEqual({
-      findingKey: 'cloud:s3_public_access_block_drift_intended_public',
+      findingKey: 'cloud:s3_public_access_block_drift_public',
       functionName: 'ag-fix-remove-bucket-public-access-block',
     });
     expect(Object.keys(FIX_REGISTRY).sort()).toEqual(Object.keys(ALLOWED_FIXES).sort());
@@ -152,14 +152,14 @@ describe('remove-bucket-public-access-block handler', () => {
     const mutating = policy.Statement[1];
     expect(reads?.Condition).toBeUndefined();
     expect(mutating?.Condition).toEqual({
-      StringEquals: { 'aws:ResourceTag/intended-public': 'true' },
+      StringEquals: { 'aws:ResourceTag/public': 'true' },
     });
     const fix = JSON.parse(
       readFileSync(path.join(ROOT, 'src/fixes/remove-bucket-public-access-block/fix.json'), 'utf8'),
     );
     expect(fix).toMatchObject({
       name: 'remove-bucket-public-access-block',
-      findingKey: 'cloud:s3_public_access_block_drift_intended_public',
+      findingKey: 'cloud:s3_public_access_block_drift_public',
       action: ACTION,
       callsGrok: false,
     });
@@ -344,13 +344,14 @@ describe('remove-bucket-public-access-block handler', () => {
   it('refuses a dry run and an apply when a required tag is missing, mistyped, or wrong', async () => {
     const cases: Array<{ label: string; tags: Array<{ Key: string; Value: string }> }> = [
       { label: 'empty tag set', tags: [] },
-      { label: 'missing intended-public', tags: tagsWithout('intended-public') },
+      { label: 'missing public', tags: tagsWithout('public') },
       { label: 'missing auto-remediate', tags: tagsWithout('auto-remediate') },
       { label: 'missing purpose', tags: tagsWithout('purpose') },
-      { label: 'intended-public false', tags: tagsReplacing('intended-public', 'false') },
-      { label: 'intended-public True', tags: tagsReplacing('intended-public', 'True') },
-      { label: 'intended-public TRUE', tags: tagsReplacing('intended-public', 'TRUE') },
-      { label: 'Intended-Public key', tags: tagsReplacing('intended-public', 'true', 'Intended-Public') },
+      { label: 'public false', tags: tagsReplacing('public', 'false') },
+      { label: 'public True', tags: tagsReplacing('public', 'True') },
+      { label: 'public TRUE', tags: tagsReplacing('public', 'TRUE') },
+      { label: 'Intended-Public key', tags: tagsReplacing('public', 'true', 'Intended-Public') },
+      { label: 'old intended-public key', tags: tagsReplacing('public', 'true', 'intended-public') },
       { label: 'auto-remediate false', tags: tagsReplacing('auto-remediate', 'false') },
       { label: 'auto-remediate True', tags: tagsReplacing('auto-remediate', 'True') },
       { label: 'AUTO-REMEDIATE key', tags: tagsReplacing('auto-remediate', 'true', 'AUTO-REMEDIATE') },
@@ -376,6 +377,7 @@ describe('remove-bucket-public-access-block handler', () => {
         expect(JSON.stringify(result), entry.label).not.toContain('other-value');
         expect(JSON.stringify(result), entry.label).not.toContain('TRUE');
         expect(JSON.stringify(result), entry.label).not.toContain('Intended-Public');
+        expect(JSON.stringify(result), entry.label).not.toContain('intended-public');
       }
     }
   });
@@ -473,7 +475,7 @@ describe('remove-bucket-public-access-block handler', () => {
   });
 
   it('refuses a tag payload and a block payload that are not usable', async () => {
-    const badTags = fakeClient({ tags: { TagSet: [{ Key: 'intended-public' }] } });
+    const badTags = fakeClient({ tags: { TagSet: [{ Key: 'public' }] } });
     const badBlock = fakeClient({ block: {} });
 
     const tags = await handleRemoveBucketPublicAccessBlock({ ...EVENT, apply: true }, badTags.client);
@@ -498,11 +500,11 @@ describe('remove-bucket-public-access-block handler', () => {
     expect(source).toContain("const ACTION = 's3:PutBucketPublicAccessBlock'");
     expect(source).toContain("const AUTO_REMEDIATE_TAG_KEY = 'auto-remediate'");
     expect(source).toContain("const AUTO_REMEDIATE_TAG_VALUE = 'true'");
-    expect(source).toContain("const INTENDED_PUBLIC_TAG_KEY = 'intended-public'");
-    expect(source).toContain("const INTENDED_PUBLIC_TAG_VALUE = 'true'");
+    expect(source).toContain("const PUBLIC_TAG_KEY = 'public'");
+    expect(source).toContain("const PUBLIC_TAG_VALUE = 'true'");
     expect(source).toContain("const PURPOSE_TAG_KEY = 'purpose'");
     expect(source).toContain("const PURPOSE_TAG_VALUE = 'ag-demo-synthetic'");
-    const intendedAt = source.indexOf('if (!hasIntendedPublicTag(');
+    const intendedAt = source.indexOf('if (!hasPublicTag(');
     const autoAt = source.indexOf('if (!hasAutoRemediateTag(');
     const purposeAt = source.indexOf('if (!hasDemoPurpose(');
     const deleteAt = source.indexOf('new DeletePublicAccessBlockCommand');

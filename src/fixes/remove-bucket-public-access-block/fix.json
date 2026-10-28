@@ -1,7 +1,7 @@
 {
   "name": "remove-bucket-public-access-block",
-  "findingKey": "cloud:s3_public_access_block_drift_intended_public",
+  "findingKey": "cloud:s3_public_access_block_drift_public",
   "action": "s3:PutBucketPublicAccessBlock",
-  "description": "Remove Block Public Access on the one intended-public demo bucket",
+  "description": "Remove Block Public Access on the one public demo bucket",
   "callsGrok": false
 }
