@@ -1,174 +1,93 @@
 # Access Guardian
 
-Access Guardian is a defensive demo for cloud access changes. Four Grok Bot agents handle intake, cases, and the conversation. This repository is the hard gate in front of a change: an allow-list, one Lambda per fix, IAM scoped to that fix, and a guard that checks the tree. A Lambda changes AWS only when the event has `apply` set to boolean `true`, and only after Yann says yes. Code lands only when Yann merges.
+Access Guardian is a defensive demo. The bots triage risky cloud changes. This repository is the gate in front of a change: an allow-list, one Lambda per fix, and a guard that checks the tree.
 
-The bots, Slack, and Notion are not in this repository. Those parts are described here as they are operated. Every role, function, rule, tag, and workflow that this repository defines is taken from the code and the docs that match it.
+## Problem
 
-## How a case flows
+Cloud teams already have too many changes to review, and agentic tools will keep adding more. Checking whether a change is legitimate is slow, so real risk gets lost in the volume. The red flags are a user on leave making changes, a bucket's public or private state flipped against its intent, and a sensitive port opened to any outside range.
+
+## Flow
+
+The diagram uses the same edges as [site/slides.md](site/slides.md).
 
 ```mermaid
-flowchart TD
-  subgraph intakeBox [Intake]
-    cloudtrail[CloudTrail]
-    sgRule["ag-cloudtrail-sg-ingress-to-lead"]
-    s3Rule["ag-cloudtrail-s3-public-access-to-lead"]
-    apiDest["API destination ag-lead-webhook"]
-    slack["Slack platsec-demo"]
-    cloudtrail --> sgRule
-    cloudtrail --> s3Rule
-    sgRule --> apiDest
-    s3Rule --> apiDest
-  end
-
-  subgraph botsBox [Bots]
-    lead["AG Lead"]
-    notion["Notion AG cases"]
-    context["AG Context"]
-    changeBot["AG Change"]
-    builder["AG Builder"]
-    yann[Yann]
-  end
-
-  subgraph deployBox [Deploy]
-    mainBranch[main]
-    applyWf["terraform-apply.yml"]
-    terraform["infra fix_names and module fix"]
-  end
-
-  subgraph runBox [Run a fix]
-    invoker["ag-bot-invoker"]
-    reader["ag-reader"]
-    closeFn["ag-fix-close-open-port"]
-    restoreFn["ag-fix-restore-bucket-public-access-block"]
-    removeFn["ag-fix-remove-bucket-public-access-block"]
-  end
-
-  subgraph gatesBox [Guardrails]
-    allowList["allow-list"]
-    guardAudit["src/guard audit"]
-    tagAuto["auto-remediate true"]
-    tagPurpose["purpose ag-demo-synthetic"]
-    tagPublic["public true"]
-    guardLabel["guard-change label"]
-  end
-
-  apiDest --> lead
-  slack -->|"tagged AG-lead"| lead
-  lead --> notion
-  lead --> context
-  context --> changeBot
-  changeBot --> builder
-  builder --> yann
-  yann --> mainBranch
-  mainBranch --> applyWf
-  applyWf --> terraform
-  terraform --> closeFn
-  terraform --> restoreFn
-  terraform --> removeFn
-  lead --> invoker
-  invoker --> closeFn
-  invoker --> restoreFn
-  invoker --> removeFn
-  allowList --> guardAudit
-  guardAudit --> tagAuto
-  tagAuto --> tagPurpose
-  tagPurpose --> tagPublic
-  tagPublic --> guardLabel
-  guardLabel --> closeFn
-  guardLabel --> restoreFn
-  guardLabel --> removeFn
+flowchart LR
+  cloudtrail[CloudTrail] --> eventbridge[EventBridge] --> lead[AG Lead]
+  lead --> notion["Notion<br/>(AG cases)"]
+  lead <--> slack[Slack] <--> yann["Yann<br/>(human)"]
+  lead --> context["AG Context<br/>(IAM, HR, tags)"] --> change[AG Change]
+  change -->|fix exists| lambda["ag-fix Lambda<br/>(dry run,<br/>then apply)"] --> aws[AWS]
+  change -->|no fix| builder[AG Builder] --> pr[GitHub PR] --> merges["Yann merges"] --> deploy["Terraform deploys<br/>the Lambda"]
 ```
 
-`ag-cloudtrail-sg-ingress-to-lead` matches successful `AuthorizeSecurityGroupIngress` only. `ag-cloudtrail-s3-public-access-to-lead`, `ag-bot-invoker`, and `ag-reader` are created outside Terraform (manual). This repository does not say which bot assumes `ag-reader`.
+CloudTrail events go through EventBridge to AG Lead. Lead records the case in Notion under AG cases and talks with Yann in Slack. Cases are discussed in #platform-security. Lead asks AG Context for IAM, HR, and tags, and Context passes the case to AG Change. When a fix exists, Change runs the ag-fix Lambda. The Lambda does a dry run, then applies, and the write goes to AWS. When no fix exists, Change asks AG Builder. Builder opens a GitHub pull request. Build discussion is in #platform-security-build. Yann merges, and Terraform deploys the Lambda.
 
-### Intake
+The four bots are not code in this repository. The EventBridge intake is still created by hand. See [docs/intake.md](docs/intake.md).
 
-CloudTrail sends events through EventBridge rules to an API destination. The destination POSTs to AG Lead's webhook routine. There is no Lambda on that path. See [docs/intake.md](docs/intake.md).
+## Deployed fixes
 
-`ag-cloudtrail-sg-ingress-to-lead` is on the default bus. It matches successful `AuthorizeSecurityGroupIngress` events. A failed call and a dry run set `errorCode`, and those events are left out. The connection and the API destination are both named `ag-lead-webhook`. The rule target uses role `ag-eventbridge-to-ag-lead`, which may call `events:InvokeApiDestination` on that destination. The target retries 3 times within 1 hour. The input transformer sends the fields listed in [docs/intake.md](docs/intake.md), each as a string. `source` is the constant `aws-cloudtrail`. That rule was created by hand.
+`src/fixes/allow-list.ts` names the fixes this repository will automate. `infra/main.tf` lists the same names in `local.fix_names`. Each fix has one IAM action. The handler defaults to a dry run and writes only when `apply` is boolean `true`. A second run that finds the desired state returns `changed: false`.
 
-`ag-cloudtrail-s3-public-access-to-lead` is created outside Terraform (manual). Its event pattern is not written in this repository.
+`src/guard/audit.ts` requires every allow-listed handler to call `hasAutoRemediateTag` before its mutating send. The close-only actions in `src/guard/mutating-apis.ts` are `ec2:RevokeSecurityGroupIngress`, `s3:PutBucketPublicAccessBlock`, and `iam:PutUserPolicy`.
 
-Slack channel `platsec-demo` also reaches AG Lead, and only when the message tags `@AG-lead`. No Slack code lives here.
+A fix returns a resource to its recorded intended state. `remove-bucket-public-access-block` is the one fix that opens access, and only when the handler and the IAM tag condition both see `public=true` on a bucket that also has `auto-remediate=true` and `purpose=ag-demo-synthetic`. The other fixes stay close-only.
 
-TODO: move `ag-reader`, `ag-bot-invoker`, and `ag-cloudtrail-s3-public-access-to-lead` into `infra/`.
+### close-open-port
 
-### Bots
+Action: `ec2:RevokeSecurityGroupIngress`. Finding key: `cloud:open_port`. Function: `ag-fix-close-open-port`.
 
-These four agents are Grok Bots. They are not code in this repository.
+The handler revokes one ingress rule on one security group. Protocol is `tcp` or `udp` with one port, or `-1` with no port, plus one IPv4 CIDR. It revokes only when exactly one ingress rule matches. For `tcp` and `udp`, zero matches returns `already_closed`, and more than one match returns `NotOneRule`. For protocol `-1`, zero matches and more than one match are refused.
 
-- **AG Lead** takes intake, keeps cases, speaks in Slack as `@AG-lead`, writes Notion `AG cases`, and holds the approvals gate.
-- **AG Context** records who, why, the owner, and the intended state. Identity is merged into AG Context.
-- **AG Change** picks the fix or proposes a build.
-- **AG Builder** writes the fix pull request through a Cursor cloud agent.
+When one rule matches, the handler requires `auto-remediate=true`, including on a dry run that would revoke. It then calls `classifyIngress()` on the named protocol, port, and CIDR, with the security group tags. A verdict of `ok` returns `status` `refused` and reason `rule is not a finding under the port rule`, and the rule stays. IAM allows the revoke on a security group only when `auto-remediate` is `true` and `purpose` is `ag-demo-synthetic`. A missing `purpose` tag can pass the handler and fail in IAM on the revoke.
 
-Yann reviews and merges. Yann's Slack id is `U0CAKUDP3L0`. That is the only person whose messages count as approvals.
+`classifyIngress()` in `src/policy/classify-ingress.ts` makes no AWS call. A sensitive port is a finding when any IPv4 or IPv6 source is not fully inside private space (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`, and `fc00::/7`). A range that only partly overlaps that space, and a CIDR that cannot be parsed, are findings. Protocol `-1`, a port range that overlaps a sensitive port, and a missing or unparseable port count as sensitive. A sensitive port whose source reaches outside private space is still a finding when the group is tagged `public=true`. Any other port is a finding only when it is world-open (`0.0.0.0/0` or `::/0`) and the group has no `public=true` tag. World-open ports 80 and 443 pass only when that tag is set. The key and the value are exact and case-sensitive. The port list is `src/policy/sensitive-ports.ts`.
 
-### Deploy
+Success reasons: `dry_run`, `already_closed`, `revoked`. Undo is a human step: authorize that same ingress rule again.
 
-A merge to `main` runs [.github/workflows/terraform-apply.yml](.github/workflows/terraform-apply.yml). The workflow tests, typechecks, builds the fix zips with [scripts/build-fixes.sh](scripts/build-fixes.sh), and applies [infra/](infra/). [infra/main.tf](infra/main.tf) lists `local.fix_names`. The module at [infra/modules/fix](infra/modules/fix) creates, for each name, role `ag-fix-<name>`, the inline policy from that folder's `policy.json`, log group `/aws/lambda/ag-fix-<name>`, and function `ag-fix-<name>`. The function runtime is Node 20, the handler is `index.handler`, and the role always sets `permissions_boundary` to `ag-fix-boundary`. The region is `ap-southeast-1`.
+### restore-bucket-public-access-block
 
-Pull requests run [.github/workflows/terraform-plan.yml](.github/workflows/terraform-plan.yml). That workflow checks protected paths, and it plans only when `src/fixes/`, `infra/`, the build script, or a Terraform workflow changed. Apply runs on `main` only.
+Action: `s3:PutBucketPublicAccessBlock`. Finding key: `cloud:s3_public_access_block_removed`. Function: `ag-fix-restore-bucket-public-access-block`.
 
-The one-time bootstrap (OIDC, plan role, apply role, boundary, state backend) is hand-built. See [docs/aws-setup.md](docs/aws-setup.md).
+The handler turns on all four Block Public Access flags for one bucket whose name starts with `ag-demo-`. The flags are `BlockPublicAcls`, `IgnorePublicAcls`, `BlockPublicPolicy`, and `RestrictPublicBuckets`, all hardcoded true. It refuses a bucket tagged `public=true` (`PublicBucket`) and leaves that bucket unchanged. It requires `purpose=ag-demo-synthetic` and `auto-remediate=true`. IAM scopes the role to buckets named `ag-demo-*` and has no tag condition.
 
-### Running a fix
+Success reasons: `dry_run`, `already_blocked`, `restored`. There is no undo.
 
-AG Lead assumes `ag-bot-invoker` and invokes the fix Lambda. That role is created outside Terraform (manual). Its permission is `lambda:InvokeFunction` on `ag-fix-*`. `ag-reader` handles read-only checks and is created outside Terraform (manual).
+### remove-bucket-public-access-block
 
-The handler defaults to a dry run. `apply` is omitted or set to `false` on the first invoke. Boolean `true` is the only value that writes, and Lead sets it only after Yann's yes. A second run that finds the desired state returns `changed: false`.
+Action: `s3:PutBucketPublicAccessBlock`. Finding key: `cloud:s3_public_access_block_drift_public`. Function: `ag-fix-remove-bucket-public-access-block`.
 
-Each fix Lambda has its own role, `ag-fix-<name>`. The IAM tag conditions are in the next section.
+The handler removes Block Public Access on bucket `ag-demo-public-10281729` only. The SDK call is `DeletePublicAccessBlockCommand`. AWS authorizes that API with `s3:PutBucketPublicAccessBlock`. The handler requires `public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic` before the delete. The intended state comes from `public=true`. IAM scopes the role to that bucket. The mutating statement requires `public=true`. The read statement has no tag condition.
 
-## Fixes on main
+Success reasons: `dry_run`, `already_absent`, `removed`. There is no undo.
 
-`src/fixes/allow-list.ts` is the list this repository will automate. `src/fixes/registry.ts` is derived from it. A bot invokes `ag-fix-<name>`. All three names below are in `local.fix_names`, and each has a folder, a test, and an allow-list entry. The remove fix is complete on `main`. It is not a partial folder.
+### contain-iam-user
 
-| Folder and function | Finding key | IAM action | What the handler does |
-| --- | --- | --- | --- |
-| `close-open-port`, function `ag-fix-close-open-port` | `cloud:open_port` | `ec2:RevokeSecurityGroupIngress` | Revokes one ingress rule on one security group when `classifyIngress()` says it is a finding. Protocol is `tcp` or `udp` with one port, or `-1` with no port, and one IPv4 CIDR. A verdict of `ok` returns `status` `refused` and is not revoked. For `-1`, zero matches and more than one match are also refused. |
-| `restore-bucket-public-access-block`, function `ag-fix-restore-bucket-public-access-block` | `cloud:s3_public_access_block_removed` | `s3:PutBucketPublicAccessBlock` | Turns on all four Block Public Access flags for one bucket whose name starts with `ag-demo-`. |
-| `remove-bucket-public-access-block`, function `ag-fix-remove-bucket-public-access-block` | `cloud:s3_public_access_block_drift_public` | `s3:PutBucketPublicAccessBlock` | Removes Block Public Access on bucket `ag-demo-public-10281729` only. The SDK call is `DeletePublicAccessBlockCommand`. AWS authorizes that API with `s3:PutBucketPublicAccessBlock`. |
+Action: `iam:PutUserPolicy`. Finding key: `identity:on_leave_user_activity`. Function: `ag-fix-contain-iam-user`.
 
-Success reasons:
+The handler attaches the inline policy `ag-containment-deny` to one IAM user. The document is a fixed deny of every action on every resource. Input cannot change the name or the document. `hrStatus` must be exactly `On leave`. The handler trusts that field as given. `userName` must be a plain IAM user name. The handler refuses a user name that starts with `ag-`, an ARN, or a role, assumed-role, or SSO principal. The user must exist and must carry `auto-remediate=true` and `purpose=ag-demo-synthetic`. The handler refuses an admin: an attached `AdministratorAccess` or `IAMFullAccess` policy, or membership in the group `Admin`, `Administrators`, or `Administrator`. IAM allows the put, and the reads other than `iam:ListUserTags`, on an IAM user only when both tags match. `iam:ListUserTags` has no tag condition.
 
-- `close-open-port`: `dry_run`, `already_closed`, or `revoked`.
-- `restore-bucket-public-access-block`: `dry_run`, `already_blocked`, or `restored`. The four flags on the put are hardcoded true.
-- `remove-bucket-public-access-block`: `dry_run`, `already_absent`, or `removed`.
+Success reasons: `dry_run`, `already_contained`, `contained`. Undo is a human step: delete the inline policy `ag-containment-deny`.
 
-`close-open-port` lists an undo on the allow-list: authorize that same ingress rule again. The handler does not perform the undo. The two bucket fixes list `There is no undo`.
+### Daily report
 
-A fix calls Grok only when `fix.json` says `callsGrok` is true. All three say `false`. The only xAI call in this repository is `extract()` in [src/grok/client.ts](src/grok/client.ts). Temperature is 0, the timeout is 15 seconds, and a failure is `no_key`, `timeout`, `http_error`, `bad_json`, or `schema_mismatch`. CloudTrail intake is structured. That path does not call Grok.
+`ag-report-daily` is a read-only Lambda. It is not a fix and it is not in `fix_names`. EventBridge Scheduler runs it daily at 00:00 UTC (08:00 SGT). It reads CloudTrail, asks Grok through `extract()` in `src/grok/client.ts` for a summary and suspected findings, checks suspected open ports with `classifyIngress()`, and posts the report to #platform-security. It does not open a case and it does not change AWS. Findings become cases only through AG Lead intake.
 
-## IAM tag conditions
+## Opt-in tags
 
-Taken from each `policy.json` and handler.
+A resource this demo may change carries `auto-remediate=true` and `purpose=ag-demo-synthetic`. A resource that is meant to be public also carries `public=true`. The key and the value are exact and case-sensitive. `public=true` is the only record of intended public state.
 
-- **`ag-fix-close-open-port`.** The revoke statement allows `ec2:RevokeSecurityGroupIngress` on `arn:aws:ec2:*:*:security-group/*` only when both `aws:ResourceTag/auto-remediate` is `true` and `aws:ResourceTag/purpose` is `ag-demo-synthetic`. The two read actions have no tag condition and use `Resource` `*`. The handler checks `auto-remediate=true` before a revoke, including a dry run that would revoke. The handler does not check `purpose`. It calls `classifyIngress()` on the named rule with the group tags and does not revoke a verdict of `ok`. A sensitive port, including protocol `-1`, on a `public=true` group is still revoked.
-- **`ag-fix-restore-bucket-public-access-block`.** Both statements use `arn:aws:s3:::ag-demo-*`. Neither statement has a tag condition. The handler requires `purpose=ag-demo-synthetic` and `auto-remediate=true`. It refuses a bucket that has `public=true` and leaves that bucket unchanged.
-- **`ag-fix-remove-bucket-public-access-block`.** Both statements use `arn:aws:s3:::ag-demo-public-10281729`. The mutating statement requires `aws:ResourceTag/public` to be `true`. The read statement has no tag condition. The handler requires `public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic` before the delete. It does not read case text. The intended state comes from `public=true`.
+## Auto-remediation
 
-`src/guard/audit.ts` requires every allow-listed handler to declare `auto-remediate` and to call `hasAutoRemediateTag` before its mutating send. The two bucket handlers must also check `public` before that send: present for the remove fix, absent for the restore fix.
+A fix runs without asking when its guards and tags pass. The handler still defaults to a dry run, and only boolean `true` for `apply` writes. A human is asked only for intent, for a build, for a merge, and for a guard change.
 
-`src/policy/classify-ingress.ts` classifies one ingress rule as `ok` or `finding`. It makes no AWS call and no Grok call. A sensitive port is a finding when any IPv4 or IPv6 source range is not fully inside private space (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`, and `fc00::/7`). A range that only partly overlaps private space, and a CIDR that cannot be parsed, are findings. Protocol `-1`, a port range that overlaps a sensitive port, and a missing or unparseable port count as sensitive and fail closed. A sensitive port stays a finding on a group tagged `public=true`. A non-sensitive port keeps the world-open rule: a rule is world-open when any CIDR is `0.0.0.0/0` or `::/0`, and a rule that is not world-open is ok. Any world-open non-sensitive port, including 80 and 443, is a finding unless the security group tag `public=true` is set. The key and the value are exact and case-sensitive. That is the same tag the S3 fixes use. The port list, with ranges expanded, is `src/policy/sensitive-ports.ts`.
+## The guard-change label
 
-## Guardrails
+Protected paths need the `guard-change` label. Those paths are `src/guard/`, `tests/guard*`, `infra/modules/`, `.github/`, `src/fixes/allow-list.ts`, and `.cursor/`. [scripts/check-protected-paths.mjs](scripts/check-protected-paths.mjs) fails the pull request when one of them changes and the label is absent. Only Yann adds the label.
 
-- **Allow-list and `src/guard` audit.** A fix folder needs `handler.ts`, `policy.json`, `fix.json`, a test, an allow-list entry, a registry row, and a `fix_names` entry. One mutating action, no wildcards, and that action must be on the close-only list in `src/guard/mutating-apis.ts` (`ec2:RevokeSecurityGroupIngress`, `s3:PutBucketPublicAccessBlock`). A fix may open access only when it returns a resource to its intended state. That has to be proven both by the public=true tag check in the handler and by the IAM tag condition on the fix role. Every other fix stays close-only. The guard blocks `Authorize*`, IAM action names matching `Delete*PublicAccessBlock`, `iam:*`, and `Put*Policy`. `DeletePublicAccessBlockCommand` is allowed only in `src/fixes/remove-bucket-public-access-block/handler.ts`, and only when the three tag checks come before the send. The command is not renamed. Shell, `eval`, and a dynamic import are forbidden in `src/`. An xAI call outside the Grok client fails the guard.
-- **`guard-change` label.** [scripts/check-protected-paths.mjs](scripts/check-protected-paths.mjs) fails a pull request that edits a protected path unless that label is present. Protected paths match [.github/CODEOWNERS](.github/CODEOWNERS): `src/guard/`, `tests/guard*`, `infra/modules/`, `.github/`, `src/fixes/allow-list.ts`, and `.cursor/`. Yann adds the label. An agent does not.
+## Deploy prerequisite
 
-## Commands
+The apply role `ag-tf-apply` (repository variable `AG_TF_APPLY_ROLE_ARN`) needs `secretsmanager:DescribeSecret` on the secret `platsec-xai-api-key`. `infra/report.tf` looks that secret up by name when Terraform deploys the daily report.
 
-Node 20 or newer. `XAI_API_KEY` is read only when a live call is intended. Tests mock the network and pass with no key set. Do not commit the key.
+## In review
 
-```bash
-npm test
-npx tsc --noEmit
-terraform -chdir=infra fmt -check -recursive
-terraform -chdir=infra init -backend=false
-terraform -chdir=infra validate
-```
-
-Local validate uses `-backend=false` so init does not contact AWS. The GitHub workflows pass the state backend from repository variables and are the path that plans and applies.
-
-More detail: [docs/architecture.md](docs/architecture.md), [docs/demo-runbook.md](docs/demo-runbook.md), [docs/intake.md](docs/intake.md), [docs/aws-setup.md](docs/aws-setup.md).
+None.
