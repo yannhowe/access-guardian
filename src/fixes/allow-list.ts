@@ -19,6 +19,11 @@ export const ALLOWED_FIXES = {
     summary: 'Revoke one ingress rule on one security group',
     undo: 'Authorize that same ingress rule again',
   },
+  'restore-bucket-public-access-block': {
+    action: 'PutPublicAccessBlock',
+    summary: 'Turn on all four public access block settings for one bucket',
+    undo: 'Put the recorded bucket public access block back, or remove it if none was recorded',
+  },
 } as const satisfies Record<string, { readonly action: string; readonly summary: string; readonly undo: string }>;
 
 export type AllowedFixKey = keyof typeof ALLOWED_FIXES;

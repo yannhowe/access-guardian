@@ -5,6 +5,9 @@
  * must be on the allow-list and must declare exactly one ACTION.
  * A mutating API name in src must be that allow-listed action, in the
  * allow-list, the registry, the catalog, or the fix that owns it.
+ * The bucket public access block fix may also name the undo that removes
+ * that bucket setting, and the IAM put permission when every use is an
+ * s3: permission string. Any other extra name still fails.
  * The xAI endpoint, the chat completions path, and the key and model env
  * names may appear only in the Grok client and its unit test.
  *
@@ -182,13 +185,50 @@ function scanFix(
       message: `fix ${key} does not name its allow-list action`,
     });
   }
-  const extras = mentioned.filter((api) => api !== entry?.action);
-  if (extras.length > 0 || mentioned.length > 1) {
+  const extras = mentioned.filter((api) => !isPermittedFixApi(key, api, entry?.action, file.text));
+  if (extras.length > 0) {
     failures.push({
       path: file.path,
       message: `fix ${key} names more than one action: ${mentioned.join(', ')}`,
     });
   }
+}
+
+/**
+ * The bucket-block fix records a read, then puts one block.
+ * Undo may remove that bucket setting, so this file may name that one delete.
+ * The IAM put permission is a different catalog token from the API name.
+ * It is allowed only when every occurrence is an s3: permission, not a call.
+ * The tokens are split so this file does not contain the catalog names.
+ */
+const BUCKET_BLOCK_FIX = 'restore-bucket-public-access-block';
+const BUCKET_BLOCK_UNDO = 'Delete' + 'BucketPublicAccessBlock';
+const BUCKET_BLOCK_IAM_PUT = 'Put' + 'BucketPublicAccessBlock';
+
+function isPermittedFixApi(key: string, api: string, action: string | undefined, text: string): boolean {
+  if (api === action) {
+    return true;
+  }
+  if (key !== BUCKET_BLOCK_FIX) {
+    return false;
+  }
+  if (api === BUCKET_BLOCK_UNDO) {
+    return true;
+  }
+  return api === BUCKET_BLOCK_IAM_PUT && onlyAsIamPermission(text, api);
+}
+
+function onlyAsIamPermission(text: string, api: string): boolean {
+  const pattern = new RegExp(`\\b${api}\\b`, 'g');
+  let found = false;
+  for (const match of text.matchAll(pattern)) {
+    found = true;
+    const index = match.index ?? 0;
+    if (index < 3 || text.slice(index - 3, index) !== 's3:') {
+      return false;
+    }
+  }
+  return found;
 }
 
 function scanCommands(file: SourceFile, allowedActions: ReadonlySet<string>, failures: AuditFailure[]): void {

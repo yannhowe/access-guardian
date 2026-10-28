@@ -20,6 +20,7 @@ export const MUTATING_APIS = [
   'DeleteSecurityGroup',
   'PutBucketPolicy',
   'PutBucketAcl',
+  'PutPublicAccessBlock',
   'PutBucketPublicAccessBlock',
   'DeleteBucketPublicAccessBlock',
   'DeleteBucket',

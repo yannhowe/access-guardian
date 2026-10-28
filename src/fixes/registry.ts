@@ -5,9 +5,11 @@
  */
 import type { AllowedFixKey } from './allow-list.js';
 import { closeOpenPort } from './close-open-port.js';
+import { restoreBucketPublicAccessBlock } from './restore-bucket-public-access-block.js';
 
 export const FIX_RUNNERS = {
   'close-open-port': closeOpenPort,
+  'restore-bucket-public-access-block': restoreBucketPublicAccessBlock,
 } as const;
 
 type KeysMatch =

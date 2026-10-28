@@ -59,6 +59,11 @@ describe('guard', () => {
         summary: 'Revoke one ingress rule on one security group',
         undo: 'Authorize that same ingress rule again',
       },
+      'restore-bucket-public-access-block': {
+        action: 'PutPublicAccessBlock',
+        summary: 'Turn on all four public access block settings for one bucket',
+        undo: 'Put the recorded bucket public access block back, or remove it if none was recorded',
+      },
     });
   });
 
@@ -173,6 +178,80 @@ describe('guard', () => {
 
     expect(messages).toContain('Grok call is missing a "What Grok decides:" note');
     expect(messages).toContain('Grok call is missing a "What code decides:" note');
+  });
+
+  it('allows the bucket block fix to name its undo and its IAM put permission', () => {
+    const files: SourceFile[] = [
+      {
+        path: 'src/fixes/restore-bucket-public-access-block.ts',
+        text: [
+          "export const ACTION = 'PutPublicAccessBlock' as const;",
+          's3:PutBucketPublicAccessBlock',
+          'DeleteBucketPublicAccessBlock',
+          'await client.send(command);',
+        ].join('\n'),
+      },
+    ];
+
+    expect(audit(files, rules())).toEqual([]);
+  });
+
+  it('fails when the bucket block fix names the IAM put as a call', () => {
+    const files: SourceFile[] = [
+      {
+        path: 'src/fixes/restore-bucket-public-access-block.ts',
+        text: [
+          "export const ACTION = 'PutPublicAccessBlock' as const;",
+          'PutBucketPublicAccessBlock',
+          'DeleteBucketPublicAccessBlock',
+          'await client.send(command);',
+        ].join('\n'),
+      },
+    ];
+
+    const messages = audit(files, rules()).map((failure) => failure.message);
+
+    expect(messages.some((message) => message.includes('more than one action'))).toBe(true);
+  });
+
+  it('fails when the bucket block fix names a third action', () => {
+    const files: SourceFile[] = [
+      {
+        path: 'src/fixes/restore-bucket-public-access-block.ts',
+        text: [
+          "export const ACTION = 'PutPublicAccessBlock' as const;",
+          's3:PutBucketPublicAccessBlock',
+          'DeleteBucketPublicAccessBlock',
+          'DeleteBucket',
+          'await client.send(command);',
+        ].join('\n'),
+      },
+    ];
+
+    const more = audit(files, rules())
+      .map((failure) => failure.message)
+      .find((message) => message.includes('more than one action'));
+    const names = more?.split(': ').at(-1)?.split(', ') ?? [];
+
+    expect(names).toContain('DeleteBucket');
+  });
+
+  it('does not let another fix name the bucket undo', () => {
+    const files: SourceFile[] = [
+      {
+        path: 'src/fixes/close-open-port.ts',
+        text: [
+          "export const ACTION = 'RevokeSecurityGroupIngress' as const;",
+          'RevokeSecurityGroupIngress',
+          'DeleteBucketPublicAccessBlock',
+          'await client.send(command);',
+        ].join('\n'),
+      },
+    ];
+
+    const messages = audit(files, rules()).map((failure) => failure.message);
+
+    expect(messages.some((message) => message.includes('more than one action'))).toBe(true);
   });
 
   it('rejects an em dash in docs and code', () => {
