@@ -1,14 +1,14 @@
 /**
  * Lambda ag-fix-remove-bucket-public-access-block.
  *
- * One mutating call: DeletePublicAccessBlock on one bucket. AWS authorizes
- * that API with s3:PutBucketPublicAccessBlock. The SDK class is
- * DeletePublicAccessBlockCommand. The import alias is the IAM action name,
- * PutBucketPublicAccessBlockCommand, so the guard can match the call to
- * the policy.
+ * One mutating call: DeletePublicAccessBlockCommand on one bucket. The
+ * command is imported and constructed under that real name. AWS authorizes
+ * that API with s3:PutBucketPublicAccessBlock. ACTION is that IAM action.
+ * It is not an alias for the command.
  *
  * Two reads: s3:GetBucketTagging and s3:GetBucketPublicAccessBlock.
- * The read alias is the same kind of rename for GetPublicAccessBlockCommand.
+ * The read alias renames GetPublicAccessBlockCommand to the IAM action
+ * name so the guard can match that read. The delete is not renamed.
  *
  * apply defaults to false. Only a boolean true deletes the block. This file
  * does not call Grok. It does not put a block. It does not change bucket
@@ -21,7 +21,7 @@
  * The intended state comes only from the intended-public=true tag.
  */
 import {
-  DeletePublicAccessBlockCommand as PutBucketPublicAccessBlockCommand,
+  DeletePublicAccessBlockCommand,
   GetBucketTaggingCommand,
   GetPublicAccessBlockCommand as GetBucketPublicAccessBlockCommand,
   S3Client,
@@ -153,7 +153,7 @@ export async function handleRemoveBucketPublicAccessBlock(
   }
 
   try {
-    await client.send(new PutBucketPublicAccessBlockCommand({ Bucket: TARGET_BUCKET }));
+    await client.send(new DeletePublicAccessBlockCommand({ Bucket: TARGET_BUCKET }));
   } catch (err) {
     if (hasErrorCode(err, MISSING_BLOCK)) {
       return { ok: true, changed: false, dryRun: false, ...body, reason: 'already_absent' };

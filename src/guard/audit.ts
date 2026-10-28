@@ -12,6 +12,16 @@
  * requires the tag to be present. restore-bucket-public-access-block
  * requires the tag to be absent.
  *
+ * DeletePublicAccessBlockCommand and DeleteBucketPublicAccessBlockCommand
+ * are blocked in every handler. The one exception is
+ * src/fixes/remove-bucket-public-access-block/handler.ts, and only when
+ * that handler checks intended-public=true, auto-remediate=true, and
+ * purpose=ag-demo-synthetic before the send. The checks are exact and
+ * case-sensitive. An import or assignment that renames either command
+ * fails. IAM action names DeletePublicAccessBlock and
+ * DeleteBucketPublicAccessBlock stay blocked in every policy. The
+ * authorizing action remains s3:PutBucketPublicAccessBlock.
+ *
  * The xAI endpoint and the key and model env names may appear only in the
  * Grok client and its unit test.
  *
@@ -76,7 +86,7 @@ const FORBIDDEN_TOKENS = [
 const BARE_EXEC = /(?:^|[^.\w])exec\s*\(/;
 
 const EXTRACT_CALL = 'extract' + '(';
-const COMMAND = /new\s+([A-Z][A-Za-z0-9]*)Command\b/g;
+const COMMAND = /new\s+(?:[A-Za-z_$][\w$]*\s*\.\s*)?([A-Z][A-Za-z0-9]*)Command\b/g;
 
 export function audit(input: AuditInput): AuditFailure[] {
   const failures: AuditFailure[] = [];
@@ -91,6 +101,7 @@ export function audit(input: AuditInput): AuditFailure[] {
   }
 
   scanSources(input, failures);
+  scanDeletePublicAccessBlockSources(input.files, failures);
 
   const fixNames = new Set(input.fixes.map((fix) => fix.name));
   for (const name of Object.keys(input.allowList)) {
@@ -225,6 +236,8 @@ function scanFix(fix: FixFolder, input: AuditInput, failures: AuditFailure[]): v
   const folder = `src/fixes/${fix.name}`;
   if (fix.handlerText === null) {
     failures.push({ path: folder, message: `fix ${fix.name} is missing handler.ts` });
+  } else {
+    scanDeletePublicAccessBlock(fix, failures);
   }
   if (fix.policyText === null) {
     failures.push({ path: folder, message: `fix ${fix.name} is missing policy.json` });
@@ -328,7 +341,7 @@ function scanFix(fix: FixFolder, input: AuditInput, failures: AuditFailure[]): v
   }
 
   for (const command of commands) {
-    const listed = actions.some((action) => actionName(action) === command);
+    const listed = actions.some((action) => actionCoversCommand(action, command, fix));
     if (!listed) {
       failures.push({
         path: `${folder}/handler.ts`,
@@ -341,8 +354,7 @@ function scanFix(fix: FixFolder, input: AuditInput, failures: AuditFailure[]): v
     if (!isIamAction(action)) {
       continue;
     }
-    const name = actionName(action);
-    const used = commands.some((command) => command === name);
+    const used = commands.some((command) => actionCoversCommand(action, command, fix));
     if (!used) {
       failures.push({
         path: `${folder}/policy.json`,
@@ -674,13 +686,20 @@ function isReadCommand(name: string): boolean {
   return name.startsWith('Describe') || name.startsWith('List') || name.startsWith('Get');
 }
 
-/** Opens, deletes public access, IAM, or a policy write. These never pass. */
+/**
+ * Opens, deletes public access, IAM, or a policy write.
+ * DeletePublicAccessBlock and DeleteBucketPublicAccessBlock never pass in a
+ * policy. The SDK command exception does not add those IAM names.
+ */
 function isBlocked(action: string): boolean {
   if (action.startsWith('iam:')) {
     return true;
   }
   const name = actionName(action);
   if (name.startsWith('Authorize')) {
+    return true;
+  }
+  if (name === 'DeletePublicAccessBlock' || name === 'DeleteBucketPublicAccessBlock') {
     return true;
   }
   if (/^Delete.*PublicAccessBlock$/.test(name)) {
@@ -690,4 +709,187 @@ function isBlocked(action: string): boolean {
     return true;
   }
   return false;
+}
+
+const DELETE_PUBLIC_ACCESS_BLOCK_COMMAND = 'DeletePublicAccessBlockCommand';
+const DELETE_BUCKET_PUBLIC_ACCESS_BLOCK_COMMAND = 'DeleteBucketPublicAccessBlockCommand';
+const REMOVE_BUCKET_PUBLIC_ACCESS_BLOCK_HANDLER = 'src/fixes/remove-bucket-public-access-block/handler.ts';
+const DELETE_PUBLIC_ACCESS_BLOCK_IAM_ACTION = 's3:PutBucketPublicAccessBlock';
+
+const DELETE_COMMAND_USE =
+  /new\s+(?:[A-Za-z_$][\w$]*\s*\.\s*)?(Delete(?:Bucket)?PublicAccessBlockCommand)\b/g;
+const DELETE_IMPORT_ALIAS = /Delete(?:Bucket)?PublicAccessBlockCommand\s+as\s+([A-Za-z0-9_]+)/g;
+const DELETE_ASSIGN_ALIAS =
+  /(?:const|let|var)\s+([A-Za-z0-9_]+)\s*=\s*(Delete(?:Bucket)?PublicAccessBlockCommand)\b/g;
+
+type DeleteTagGate = {
+  label: string;
+  keyDecl: string;
+  valueDecl: string;
+  call: RegExp;
+};
+
+const DELETE_TAG_GATES: readonly DeleteTagGate[] = [
+  {
+    label: 'intended-public=true',
+    keyDecl: "const INTENDED_PUBLIC_TAG_KEY = 'intended-public'",
+    valueDecl: "const INTENDED_PUBLIC_TAG_VALUE = 'true'",
+    call: /if\s*\(\s*!\s*hasIntendedPublicTag\s*\(/,
+  },
+  {
+    label: 'auto-remediate=true',
+    keyDecl: "const AUTO_REMEDIATE_TAG_KEY = 'auto-remediate'",
+    valueDecl: "const AUTO_REMEDIATE_TAG_VALUE = 'true'",
+    call: /if\s*\(\s*!\s*hasAutoRemediateTag\s*\(/,
+  },
+  {
+    label: 'purpose=ag-demo-synthetic',
+    keyDecl: "const PURPOSE_TAG_KEY = 'purpose'",
+    valueDecl: "const PURPOSE_TAG_VALUE = 'ag-demo-synthetic'",
+    call: /if\s*\(\s*!\s*hasDemoPurpose\s*\(/,
+  },
+];
+
+function isDeletePublicAccessBlockCommand(command: string): boolean {
+  const full = `${command}Command`;
+  return full === DELETE_PUBLIC_ACCESS_BLOCK_COMMAND || full === DELETE_BUCKET_PUBLIC_ACCESS_BLOCK_COMMAND;
+}
+
+function actionCoversCommand(action: string, command: string, fix: FixFolder): boolean {
+  if (actionName(action) === command) {
+    return true;
+  }
+  return (
+    action === DELETE_PUBLIC_ACCESS_BLOCK_IAM_ACTION &&
+    isDeletePublicAccessBlockCommand(command) &&
+    deleteExceptionApplies(fix)
+  );
+}
+
+function deleteExceptionApplies(fix: FixFolder): boolean {
+  const text = fix.handlerText;
+  if (text === null || fix.name !== 'remove-bucket-public-access-block') {
+    return false;
+  }
+  if (aliasedDeletePublicAccessBlocks(text).length > 0) {
+    return false;
+  }
+  return deleteTagProblems(text).length === 0 && deleteCommandUses(text).length > 0;
+}
+
+/**
+ * The delete command is allowed only in the remove handler, and only after
+ * the three exact tag checks. A renamed import or assignment fails everywhere.
+ */
+function scanDeletePublicAccessBlock(fix: FixFolder, failures: AuditFailure[]): void {
+  const text = fix.handlerText;
+  if (text === null) {
+    return;
+  }
+  const path = `src/fixes/${fix.name}/handler.ts`;
+  for (const alias of aliasedDeletePublicAccessBlocks(text)) {
+    failures.push({
+      path,
+      message: `handler aliases ${alias}`,
+    });
+  }
+
+  const uses = deleteCommandUses(text);
+  if (uses.length === 0) {
+    return;
+  }
+  if (path !== REMOVE_BUCKET_PUBLIC_ACCESS_BLOCK_HANDLER) {
+    failures.push({
+      path,
+      message: `${DELETE_PUBLIC_ACCESS_BLOCK_COMMAND} is only allowed in ${REMOVE_BUCKET_PUBLIC_ACCESS_BLOCK_HANDLER}`,
+    });
+    return;
+  }
+  for (const problem of deleteTagProblems(text)) {
+    failures.push({ path, message: problem });
+  }
+}
+
+function scanDeletePublicAccessBlockSources(files: readonly SourceFile[], failures: AuditFailure[]): void {
+  for (const file of files) {
+    if (!file.path.startsWith('src/') || file.path === REMOVE_BUCKET_PUBLIC_ACCESS_BLOCK_HANDLER) {
+      continue;
+    }
+    for (const alias of aliasedDeletePublicAccessBlocks(file.text)) {
+      failures.push({
+        path: file.path,
+        message: `handler aliases ${alias}`,
+      });
+    }
+    if (deleteCommandUses(file.text).length > 0) {
+      failures.push({
+        path: file.path,
+        message: `${DELETE_PUBLIC_ACCESS_BLOCK_COMMAND} is only allowed in ${REMOVE_BUCKET_PUBLIC_ACCESS_BLOCK_HANDLER}`,
+      });
+    }
+  }
+}
+
+function deleteCommandUses(text: string): string[] {
+  const names = new Set<string>();
+  for (const match of text.matchAll(new RegExp(DELETE_COMMAND_USE.source, 'g'))) {
+    const name = match[1];
+    if (name !== undefined) {
+      names.add(name);
+    }
+  }
+  return [...names];
+}
+
+function aliasedDeletePublicAccessBlocks(text: string): string[] {
+  const aliases: string[] = [];
+  for (const match of text.matchAll(new RegExp(DELETE_IMPORT_ALIAS.source, 'g'))) {
+    const alias = match[1];
+    const original = match[0].startsWith(DELETE_BUCKET_PUBLIC_ACCESS_BLOCK_COMMAND)
+      ? DELETE_BUCKET_PUBLIC_ACCESS_BLOCK_COMMAND
+      : DELETE_PUBLIC_ACCESS_BLOCK_COMMAND;
+    if (alias !== undefined && alias !== original) {
+      aliases.push(`${original} as ${alias}`);
+    }
+  }
+  for (const match of text.matchAll(new RegExp(DELETE_ASSIGN_ALIAS.source, 'g'))) {
+    const alias = match[1];
+    const original = match[2];
+    if (alias !== undefined && original !== undefined && alias !== original) {
+      aliases.push(`${original} as ${alias}`);
+    }
+  }
+  return aliases;
+}
+
+function deleteTagProblems(text: string): string[] {
+  const problems: string[] = [];
+  const sendAt = firstDeleteCommandIndex(text);
+  for (const gate of DELETE_TAG_GATES) {
+    if (!text.includes(gate.keyDecl) || !text.includes(gate.valueDecl)) {
+      problems.push(
+        `${DELETE_PUBLIC_ACCESS_BLOCK_COMMAND} is missing the ${gate.label} check before the send`,
+      );
+      continue;
+    }
+    if (sendAt === undefined) {
+      continue;
+    }
+    const before = text.slice(0, sendAt);
+    const after = text.slice(sendAt);
+    if (gate.call.test(before)) {
+      continue;
+    }
+    if (gate.call.test(after)) {
+      problems.push(`${DELETE_PUBLIC_ACCESS_BLOCK_COMMAND} checks ${gate.label} after the send`);
+      continue;
+    }
+    problems.push(`${DELETE_PUBLIC_ACCESS_BLOCK_COMMAND} is missing the ${gate.label} check before the send`);
+  }
+  return problems;
+}
+
+function firstDeleteCommandIndex(text: string): number | undefined {
+  const match = new RegExp(DELETE_COMMAND_USE.source).exec(text);
+  return match?.index;
 }
