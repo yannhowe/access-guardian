@@ -5,8 +5,12 @@
  * Reads (Describe, List, Get) are not listed here.
  * This file only lists names. It does not call AWS.
  *
- * s3:PutBucketPublicAccessBlock is here so a later fix can turn public
- * access off. Do not add an action that opens or deletes.
+ * s3:PutBucketPublicAccessBlock stays on this list because AWS authorizes
+ * DeletePublicAccessBlock with that same action. A fix may open access only
+ * when it returns a resource to its intended state. That has to be proven
+ * both by the intended-public=true tag check in the handler and by the IAM
+ * tag condition on the fix role. Every other fix stays close-only. Do not
+ * add an action that opens or deletes.
  */
 export const CLOSE_ONLY_ACTIONS = [
   'ec2:RevokeSecurityGroupIngress',

@@ -136,6 +136,12 @@ describe('guard', () => {
       summary: 'Revoke one ingress rule on one security group',
       undo: 'Authorize that same ingress rule again',
     });
+    expect(ALLOWED_FIXES['remove-bucket-public-access-block']).toEqual({
+      findingKey: 'cloud:s3_public_access_block_drift_intended_public',
+      action: 's3:PutBucketPublicAccessBlock',
+      summary: 'Remove Block Public Access on the one bucket tagged intended-public=true',
+      undo: 'There is no undo',
+    });
     for (const entry of Object.values(ALLOWED_FIXES)) {
       expect(entry.findingKey).toMatch(/^[a-z0-9_]+:[a-z0-9_]+$/);
       expect(entry.action).toMatch(/^[a-z0-9]+:[A-Za-z0-9]+$/);
@@ -183,6 +189,7 @@ describe('guard', () => {
     ['ec2:AuthorizeSecurityGroupIngress'],
     ['iam:PassRole'],
     ['s3:PutBucketPolicy'],
+    ['s3:DeletePublicAccessBlock'],
     ['s3:DeleteBucketPublicAccessBlock'],
   ])('blocks %s even if someone adds it to the close-only list', (action) => {
     const failures = audit({
@@ -586,6 +593,154 @@ describe('guard', () => {
       );
     },
   );
+
+  const OTHER_FIXES = ['close-open-port', 'restore-bucket-public-access-block'] as const;
+  const OPEN_OR_DELETE_ACTIONS = [
+    's3:DeletePublicAccessBlock',
+    's3:DeleteBucketPublicAccessBlock',
+    'ec2:AuthorizeSecurityGroupIngress',
+    's3:PutBucketPolicy',
+  ] as const;
+  const OPEN_OR_DELETE_COMMANDS = [
+    'DeletePublicAccessBlockCommand',
+    'DeleteBucketPublicAccessBlockCommand',
+    'AuthorizeSecurityGroupIngressCommand',
+    'PutBucketPolicyCommand',
+  ] as const;
+
+  function otherFix(name: (typeof OTHER_FIXES)[number], over: Partial<FixFolder> = {}): FixFolder {
+    const entry = ALLOWED_FIXES[name];
+    return folder({
+      name,
+      metadataText: metadata({
+        name,
+        findingKey: entry.findingKey,
+        action: entry.action,
+        description: 'Synthetic metadata for a guard case',
+      }),
+      ...over,
+    });
+  }
+
+  it.each(OTHER_FIXES)('rejects open or delete actions in the %s policy', (name) => {
+    for (const action of OPEN_OR_DELETE_ACTIONS) {
+      const failures = audit({
+        ...repoInput(),
+        terraform: undefined,
+        closeOnlyActions: [...CLOSE_ONLY_ACTIONS, action],
+        fixes: [
+          otherFix(name, {
+            policyText: policy([
+              { action: 'ec2:DescribeSecurityGroupRules', resource: '*' },
+              { action, resource: 'arn:aws:ec2:*:*:security-group/*' },
+            ]),
+          }),
+        ],
+      });
+
+      expect(failures.some((failure) => failure.message === `blocked action ${action}`)).toBe(true);
+    }
+  });
+
+  it('rejects delete IAM action names in the remove fix policy', () => {
+    const entry = ALLOWED_FIXES['remove-bucket-public-access-block'];
+    for (const action of ['s3:DeletePublicAccessBlock', 's3:DeleteBucketPublicAccessBlock'] as const) {
+      const failures = audit({
+        ...repoInput(),
+        terraform: undefined,
+        closeOnlyActions: [...CLOSE_ONLY_ACTIONS, action],
+        fixes: [
+          folder({
+            name: 'remove-bucket-public-access-block',
+            metadataText: metadata({
+              name: 'remove-bucket-public-access-block',
+              findingKey: entry.findingKey,
+              action: entry.action,
+              description: 'Synthetic metadata for a guard case',
+            }),
+            policyText: policy([
+              { action: 's3:GetBucketTagging', resource: 'arn:aws:s3:::ag-demo-public-10281729' },
+              { action, resource: 'arn:aws:s3:::ag-demo-public-10281729' },
+            ]),
+          }),
+        ],
+      });
+
+      expect(failures.some((failure) => failure.message === `blocked action ${action}`)).toBe(true);
+    }
+  });
+
+  it.each(OTHER_FIXES)('rejects open or delete commands in the %s handler', (name) => {
+    const clean = audit({
+      ...repoInput(),
+      terraform: undefined,
+      fixes: [otherFix(name)],
+    }).map((failure) => failure.message);
+
+    for (const command of OPEN_OR_DELETE_COMMANDS) {
+      const failures = audit({
+        ...repoInput(),
+        terraform: undefined,
+        fixes: [otherFix(name, { handlerText: `${HANDLER}\nnew ${command}({})` })],
+      });
+      const added = failures.filter((failure) => !clean.includes(failure.message));
+
+      expect(added.length).toBeGreaterThan(0);
+      expect(added.some((failure) => failure.path.endsWith('/handler.ts'))).toBe(true);
+    }
+  });
+
+  it('rejects the remove handler when that same code is copied into another fix', () => {
+    const handlerText = readFileSync(
+      path.join(root, 'src/fixes/remove-bucket-public-access-block/handler.ts'),
+      'utf8',
+    );
+    const policyText = readFileSync(
+      path.join(root, 'src/fixes/remove-bucket-public-access-block/policy.json'),
+      'utf8',
+    );
+    const metadataText = readFileSync(
+      path.join(root, 'src/fixes/remove-bucket-public-access-block/fix.json'),
+      'utf8',
+    );
+    const onlyHere = 'DeletePublicAccessBlockCommand is only allowed in src/fixes/remove-bucket-public-access-block/handler.ts';
+
+    for (const name of OTHER_FIXES) {
+      const failures = audit({
+        ...repoInput(),
+        terraform: undefined,
+        fixes: [folder({ name, handlerText, policyText, metadataText })],
+      });
+
+      expect(failures.some((failure) => failure.message === onlyHere)).toBe(true);
+    }
+
+    const copiedFile = audit({
+      ...repoInput(),
+      files: [
+        ...repoInput().files,
+        { path: 'src/fixes/open-the-bucket/handler.ts', text: handlerText },
+      ],
+    });
+    expect(copiedFile.some((failure) => failure.path === 'src/fixes/open-the-bucket/handler.ts' && failure.message === onlyHere)).toBe(
+      true,
+    );
+
+    const atHome = audit({
+      ...repoInput(),
+      terraform: undefined,
+      fixes: [
+        folder({
+          name: 'remove-bucket-public-access-block',
+          handlerText,
+          policyText,
+          metadataText,
+        }),
+      ],
+    });
+    expect(atHome.some((failure) => failure.message === onlyHere)).toBe(false);
+    expect(atHome.some((failure) => failure.message.includes('handler calls DeletePublicAccessBlock'))).toBe(false);
+  });
 
   it.each([
     ['intended-public=true', 'intended'],
