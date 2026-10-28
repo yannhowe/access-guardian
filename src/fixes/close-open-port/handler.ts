@@ -2,9 +2,9 @@
  * Lambda ag-fix-close-open-port.
  *
  * One close call: ec2:RevokeSecurityGroupIngress.
- * Two reads: ec2:DescribeSecurityGroupRules, so a missing rule returns
- * changed: false instead of revoking, and ec2:DescribeSecurityGroups, which
- * returns the group tags.
+ * Two reads: ec2:DescribeSecurityGroupRules, so a missing tcp or udp rule
+ * returns changed: false instead of revoking, and ec2:DescribeSecurityGroups,
+ * which returns the group tags. A missing -1 rule is refused.
  *
  * apply defaults to false. Only a boolean true revokes. The bot sets that
  * after Yann's yes. This file does not call Grok.
@@ -13,7 +13,9 @@
  * What code decides: whether the input is one rule, whether that rule is
  * present, whether the group has tag auto-remediate set to true, whether
  * classifyIngress says the named rule is a finding, and whether the one
- * revoke is sent.
+ * revoke is sent. Protocol -1 has no port. For that protocol, zero matches
+ * and more than one match are refused. An ok verdict uses the same refusal
+ * as tcp and udp.
  *
  * The role only revokes a group tagged purpose=ag-demo-synthetic and
  * auto-remediate=true. IAM enforces both tags. The handler also refuses,
@@ -52,46 +54,41 @@ export type AwsClient = {
   send(command: unknown): Promise<unknown>;
 };
 
+type RuleIdentity = { protocol: 'tcp' | 'udp'; port: number } | { protocol: '-1' };
+
 export type CloseOpenPortInput = {
   caseId: string;
   securityGroupId: string;
-  protocol: 'tcp' | 'udp';
-  port: number;
   cidr: string;
   apply: boolean;
-};
+} & RuleIdentity;
+
+type Named = {
+  action: typeof ACTION;
+  caseId: string;
+  securityGroupId: string;
+  cidr: string;
+} & RuleIdentity;
 
 export type FixResult =
-  | {
+  | ({
       ok: true;
       changed: boolean;
       dryRun: boolean;
-      action: typeof ACTION;
-      caseId: string;
-      securityGroupId: string;
-      protocol: 'tcp' | 'udp';
-      port: number;
-      cidr: string;
       reason: 'dry_run' | 'already_closed' | 'revoked';
-    }
+    } & Named)
   | {
       ok: false;
       changed: false;
       errorCode: string;
       errorMessage: string;
     }
-  | {
+  | ({
       ok: false;
       changed: false;
       status: 'refused';
-      reason: 'rule is not a finding under the port rule';
-      action: typeof ACTION;
-      caseId: string;
-      securityGroupId: string;
-      protocol: 'tcp' | 'udp';
-      port: number;
-      cidr: string;
-    };
+      reason: string;
+    } & Named);
 
 type Planned = CloseOpenPortInput;
 
@@ -99,8 +96,8 @@ type LiveRule = {
   groupId: string;
   egress: boolean;
   protocol: string;
-  fromPort: number;
-  toPort: number;
+  fromPort: number | null;
+  toPort: number | null;
   cidr: string;
 };
 
@@ -111,7 +108,8 @@ export async function handler(event: unknown): Promise<FixResult> {
 
 /**
  * Validate the event, read the group's rules, and revoke the one matching
- * ingress rule only when apply is true and that rule is present.
+ * ingress rule only when apply is true, that rule is present, and
+ * classifyIngress calls it a finding.
  */
 export async function handleCloseOpenPort(event: unknown, client: AwsClient): Promise<FixResult> {
   const parsed = parseEvent(event);
@@ -142,7 +140,17 @@ export async function handleCloseOpenPort(event: unknown, client: AwsClient): Pr
   }
 
   const matches = rules.filter((rule) => isTarget(rule, input));
+  const body = ruleBody(input);
   if (matches.length > 1) {
+    if (input.protocol === '-1') {
+      return {
+        ok: false,
+        changed: false,
+        status: 'refused',
+        reason: 'more than one ingress rule matches this protocol and CIDR',
+        ...body,
+      };
+    }
     return {
       ok: false,
       changed: false,
@@ -151,16 +159,16 @@ export async function handleCloseOpenPort(event: unknown, client: AwsClient): Pr
     };
   }
 
-  const body = {
-    action: ACTION,
-    caseId: input.caseId,
-    securityGroupId: input.securityGroupId,
-    protocol: input.protocol,
-    port: input.port,
-    cidr: input.cidr,
-  };
-
   if (matches.length === 0) {
+    if (input.protocol === '-1') {
+      return {
+        ok: false,
+        changed: false,
+        status: 'refused',
+        reason: 'no ingress rule matches this protocol and CIDR',
+        ...body,
+      };
+    }
     return { ok: true, changed: false, dryRun: !input.apply, ...body, reason: 'already_closed' };
   }
 
@@ -180,8 +188,8 @@ export async function handleCloseOpenPort(event: unknown, client: AwsClient): Pr
   const verdict = classifyIngress(
     {
       protocol: input.protocol,
-      fromPort: input.port,
-      toPort: input.port,
+      fromPort: input.protocol === '-1' ? null : input.port,
+      toPort: input.protocol === '-1' ? null : input.port,
       ipv4Cidrs: [input.cidr],
       ipv6Cidrs: [],
     },
@@ -205,14 +213,7 @@ export async function handleCloseOpenPort(event: unknown, client: AwsClient): Pr
     await client.send(
       new RevokeSecurityGroupIngressCommand({
         GroupId: input.securityGroupId,
-        IpPermissions: [
-          {
-            IpProtocol: input.protocol,
-            FromPort: input.port,
-            ToPort: input.port,
-            IpRanges: [{ CidrIp: input.cidr }],
-          },
-        ],
+        IpPermissions: [ipPermission(input)],
       }),
     );
   } catch (err) {
@@ -234,11 +235,23 @@ function parseEvent(event: unknown): { ok: true; value: Planned } | { ok: false;
   if (typeof record.securityGroupId !== 'string' || !GROUP_ID.test(record.securityGroupId)) {
     return { ok: false, message: 'securityGroupId must look like sg- and then 8 to 17 lowercase letters or digits' };
   }
-  if (record.protocol !== 'tcp' && record.protocol !== 'udp') {
-    return { ok: false, message: 'protocol must be tcp or udp' };
+  if (record.protocol !== 'tcp' && record.protocol !== 'udp' && record.protocol !== '-1') {
+    return { ok: false, message: 'protocol must be tcp, udp, or -1' };
   }
-  if (typeof record.port !== 'number' || !Number.isInteger(record.port) || record.port < 0 || record.port > 65535) {
+  let port: number | undefined;
+  if (record.protocol === '-1') {
+    if ('port' in record) {
+      return { ok: false, message: 'protocol -1 does not take a port' };
+    }
+  } else if (
+    typeof record.port !== 'number' ||
+    !Number.isInteger(record.port) ||
+    record.port < 0 ||
+    record.port > 65535
+  ) {
     return { ok: false, message: 'port must be an integer from 0 to 65535' };
+  } else {
+    port = record.port;
   }
   if (typeof record.cidr !== 'string' || !isIpv4Cidr(record.cidr)) {
     return { ok: false, message: 'cidr must be one IPv4 CIDR' };
@@ -247,15 +260,31 @@ function parseEvent(event: unknown): { ok: true; value: Planned } | { ok: false;
     return { ok: false, message: 'apply must be a boolean' };
   }
 
+  const apply = record.apply === true;
+  if (record.protocol === '-1') {
+    return {
+      ok: true,
+      value: {
+        caseId: record.caseId,
+        securityGroupId: record.securityGroupId,
+        protocol: '-1',
+        cidr: record.cidr,
+        apply,
+      },
+    };
+  }
+  if (port === undefined) {
+    return { ok: false, message: 'port must be an integer from 0 to 65535' };
+  }
   return {
     ok: true,
     value: {
       caseId: record.caseId,
       securityGroupId: record.securityGroupId,
       protocol: record.protocol,
-      port: record.port,
+      port,
       cidr: record.cidr,
-      apply: record.apply === true,
+      apply,
     },
   };
 }
@@ -290,20 +319,45 @@ function readRule(item: unknown): LiveRule | 'skip' | 'bad' {
   if (typeof rule.GroupId !== 'string' || typeof rule.IpProtocol !== 'string' || typeof rule.IsEgress !== 'boolean') {
     return 'bad';
   }
-  if (typeof rule.FromPort !== 'number' || typeof rule.ToPort !== 'number' || typeof rule.CidrIpv4 !== 'string') {
+  if (typeof rule.CidrIpv4 !== 'string') {
     return 'skip';
   }
-  return {
-    groupId: rule.GroupId,
-    egress: rule.IsEgress,
-    protocol: rule.IpProtocol,
-    fromPort: rule.FromPort,
-    toPort: rule.ToPort,
-    cidr: rule.CidrIpv4,
-  };
+  if (typeof rule.FromPort === 'number' && typeof rule.ToPort === 'number') {
+    return {
+      groupId: rule.GroupId,
+      egress: rule.IsEgress,
+      protocol: rule.IpProtocol,
+      fromPort: rule.FromPort,
+      toPort: rule.ToPort,
+      cidr: rule.CidrIpv4,
+    };
+  }
+  if (rule.IpProtocol === '-1' && portAbsent(rule.FromPort) && portAbsent(rule.ToPort)) {
+    return {
+      groupId: rule.GroupId,
+      egress: rule.IsEgress,
+      protocol: rule.IpProtocol,
+      fromPort: null,
+      toPort: null,
+      cidr: rule.CidrIpv4,
+    };
+  }
+  return 'skip';
+}
+
+function portAbsent(value: unknown): boolean {
+  return value === undefined || value === null;
 }
 
 function isTarget(rule: LiveRule, target: Planned): boolean {
+  if (target.protocol === '-1') {
+    return (
+      rule.groupId === target.securityGroupId &&
+      rule.egress === false &&
+      rule.protocol === '-1' &&
+      rule.cidr === target.cidr
+    );
+  }
   return (
     rule.groupId === target.securityGroupId &&
     rule.egress === false &&
@@ -312,6 +366,41 @@ function isTarget(rule: LiveRule, target: Planned): boolean {
     rule.toPort === target.port &&
     rule.cidr === target.cidr
   );
+}
+
+/**
+ * Protocol -1 is all traffic. IpPermission does not require a port range
+ * for that protocol. The revoke omits FromPort and ToPort. A described
+ * rule may still report those ports as -1, and that rule still matches.
+ */
+function ipPermission(input: Planned): {
+  IpProtocol: string;
+  FromPort?: number;
+  ToPort?: number;
+  IpRanges: Array<{ CidrIp: string }>;
+} {
+  if (input.protocol === '-1') {
+    return { IpProtocol: '-1', IpRanges: [{ CidrIp: input.cidr }] };
+  }
+  return {
+    IpProtocol: input.protocol,
+    FromPort: input.port,
+    ToPort: input.port,
+    IpRanges: [{ CidrIp: input.cidr }],
+  };
+}
+
+function ruleBody(input: Planned): Named {
+  const common = {
+    action: ACTION,
+    caseId: input.caseId,
+    securityGroupId: input.securityGroupId,
+    cidr: input.cidr,
+  };
+  if (input.protocol === '-1') {
+    return { ...common, protocol: '-1' };
+  }
+  return { ...common, protocol: input.protocol, port: input.port };
 }
 
 type GroupTag = { Key?: unknown; Value?: unknown };

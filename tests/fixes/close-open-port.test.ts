@@ -28,6 +28,13 @@ const EVENT = {
   cidr: '0.0.0.0/0',
 };
 
+const ALL_EVENT = {
+  caseId: 'case-demo-1',
+  securityGroupId: 'sg-demo0001',
+  protocol: '-1',
+  cidr: '0.0.0.0/0',
+};
+
 function openRule(over: Record<string, unknown> = {}) {
   return {
     GroupId: 'sg-demo0001',
@@ -35,6 +42,18 @@ function openRule(over: Record<string, unknown> = {}) {
     IpProtocol: 'tcp',
     FromPort: 22,
     ToPort: 22,
+    CidrIpv4: '0.0.0.0/0',
+    ...over,
+  };
+}
+
+function allTrafficRule(over: Record<string, unknown> = {}) {
+  return {
+    GroupId: 'sg-demo0001',
+    IsEgress: false,
+    IpProtocol: '-1',
+    FromPort: -1,
+    ToPort: -1,
     CidrIpv4: '0.0.0.0/0',
     ...over,
   };
@@ -395,6 +414,170 @@ describe('close-open-port handler', () => {
     });
     expect(revoked(send)).toEqual([]);
     expect(send.mock.calls.some((call) => call[0] instanceof DescribeSecurityGroupsCommand)).toBe(true);
+  });
+
+  it('revokes one all-traffic rule when the protocol and CIDR match', async () => {
+    const { client, send } = fakeClient([allTrafficRule(), openRule()]);
+
+    const result = await handleCloseOpenPort({ ...ALL_EVENT, apply: true }, client);
+
+    expect(result).toMatchObject({
+      ok: true,
+      changed: true,
+      dryRun: false,
+      action: ACTION,
+      protocol: '-1',
+      cidr: '0.0.0.0/0',
+      reason: 'revoked',
+    });
+    expect(result).not.toHaveProperty('port');
+    expect(send).toHaveBeenCalledTimes(3);
+    const revoke = send.mock.calls[2]?.[0];
+    expect(revoke).toBeInstanceOf(RevokeSecurityGroupIngressCommand);
+    expect(revoke.input).toEqual({
+      GroupId: 'sg-demo0001',
+      IpPermissions: [
+        {
+          IpProtocol: '-1',
+          IpRanges: [{ CidrIp: '0.0.0.0/0' }],
+        },
+      ],
+    });
+    expect(revoke.input.IpPermissions[0]).not.toHaveProperty('FromPort');
+    expect(revoke.input.IpPermissions[0]).not.toHaveProperty('ToPort');
+  });
+
+  it('refuses a non-world all-traffic rule through the same not-a-finding path', async () => {
+    const { client, send } = fakeClient([allTrafficRule({ CidrIpv4: '192.0.2.8/32' })]);
+
+    const result = await handleCloseOpenPort({ ...ALL_EVENT, cidr: '192.0.2.8/32', apply: true }, client);
+
+    expect(result).toEqual({
+      ok: false,
+      changed: false,
+      status: 'refused',
+      reason: 'rule is not a finding under the port rule',
+      action: ACTION,
+      caseId: 'case-demo-1',
+      securityGroupId: 'sg-demo0001',
+      protocol: '-1',
+      cidr: '192.0.2.8/32',
+    });
+    expect(revoked(send)).toEqual([]);
+  });
+
+  it('matches an all-traffic rule that describe returns without ports', async () => {
+    const rule: Record<string, unknown> = allTrafficRule();
+    delete rule.FromPort;
+    delete rule.ToPort;
+    const { client, send } = fakeClient([rule]);
+
+    const result = await handleCloseOpenPort({ ...ALL_EVENT, apply: true }, client);
+
+    expect(result).toMatchObject({ ok: true, changed: true, reason: 'revoked', protocol: '-1', cidr: '0.0.0.0/0' });
+    expect(send.mock.calls[2]?.[0].input.IpPermissions[0]).not.toHaveProperty('FromPort');
+  });
+
+  it('does not revoke an all-traffic rule on a dry run', async () => {
+    const { client, send } = fakeClient([allTrafficRule()]);
+
+    const result = await handleCloseOpenPort(ALL_EVENT, client);
+
+    expect(result).toMatchObject({ ok: true, changed: false, dryRun: true, protocol: '-1', reason: 'dry_run' });
+    expect(revoked(send)).toEqual([]);
+  });
+
+  it('refuses when more than one all-traffic rule matches the CIDR', async () => {
+    const { client, send } = fakeClient([allTrafficRule(), allTrafficRule({ SecurityGroupRuleId: 'sgr-demo0002' })]);
+
+    const result = await handleCloseOpenPort({ ...ALL_EVENT, apply: true }, client);
+
+    expect(result).toEqual({
+      ok: false,
+      changed: false,
+      status: 'refused',
+      reason: 'more than one ingress rule matches this protocol and CIDR',
+      action: ACTION,
+      caseId: 'case-demo-1',
+      securityGroupId: 'sg-demo0001',
+      protocol: '-1',
+      cidr: '0.0.0.0/0',
+    });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(revoked(send)).toEqual([]);
+  });
+
+  it('refuses when no all-traffic rule matches the CIDR', async () => {
+    const { client, send } = fakeClient([
+      allTrafficRule({ CidrIpv4: '10.0.0.0/8' }),
+      allTrafficRule({ IsEgress: true }),
+      openRule(),
+    ]);
+
+    const dry = await handleCloseOpenPort(ALL_EVENT, client);
+    const applied = await handleCloseOpenPort({ ...ALL_EVENT, apply: true }, client);
+
+    expect(dry).toEqual({
+      ok: false,
+      changed: false,
+      status: 'refused',
+      reason: 'no ingress rule matches this protocol and CIDR',
+      action: ACTION,
+      caseId: 'case-demo-1',
+      securityGroupId: 'sg-demo0001',
+      protocol: '-1',
+      cidr: '0.0.0.0/0',
+    });
+    expect(applied).toEqual(dry);
+    expect(revoked(send)).toEqual([]);
+  });
+
+  it('revokes a world-open all-traffic rule when the group is tagged public=true', async () => {
+    const { client, send } = fakeClient([allTrafficRule()], {
+      tags: [...GROUP_TAGS, { Key: 'public', Value: 'true' }],
+    });
+
+    const result = await handleCloseOpenPort({ ...ALL_EVENT, apply: true }, client);
+
+    expect(result).toMatchObject({ ok: true, changed: true, dryRun: false, reason: 'revoked', protocol: '-1' });
+    expect(revoked(send)).toHaveLength(1);
+  });
+
+  it('still requires auto-remediate before an all-traffic revoke', async () => {
+    const { client, send } = fakeClient([allTrafficRule()], { tags: [] });
+
+    const result = await handleCloseOpenPort({ ...ALL_EVENT, apply: true }, client);
+
+    expect(result).toEqual({
+      ok: false,
+      changed: false,
+      errorCode: 'MissingAutoRemediateTag',
+      errorMessage: 'security group must have tag auto-remediate set to true',
+    });
+    expect(revoked(send)).toEqual([]);
+  });
+
+  it('refuses protocol -1 when a port is set and does not call AWS', async () => {
+    const { client, send } = fakeClient([allTrafficRule()]);
+
+    const result = await handleCloseOpenPort({ ...ALL_EVENT, port: 0 }, client);
+
+    expect(result).toMatchObject({ ok: false, changed: false, errorCode: 'InvalidInput' });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('still revokes tcp when an all-traffic rule is also present', async () => {
+    const { client, send } = fakeClient([allTrafficRule(), openRule()]);
+
+    const result = await handleCloseOpenPort({ ...EVENT, apply: true }, client);
+
+    expect(result).toMatchObject({ ok: true, changed: true, protocol: 'tcp', port: 22, reason: 'revoked' });
+    expect(send.mock.calls[2]?.[0].input.IpPermissions[0]).toEqual({
+      IpProtocol: 'tcp',
+      FromPort: 22,
+      ToPort: 22,
+      IpRanges: [{ CidrIp: '0.0.0.0/0' }],
+    });
   });
 
   it('revokes only when the tag is exactly auto-remediate=true', async () => {
