@@ -12,7 +12,7 @@ The handler makes exactly one hardcoded mutating call. A fix returns a resource 
 
 `apply` defaults to false. Validate the input strictly. A second run must be safe and return `changed: false` when the desired state already holds. Return the real AWS error code and message.
 
-A world-open (`0.0.0.0/0` or `::/0`) sensitive port is always a finding. Any other world-open port is a finding unless the security group is tagged `public=true`. 80 and 443 pass only when tagged. The port list is `src/policy/sensitive-ports.ts`. `classifyIngress()` in `src/policy/classify-ingress.ts` applies it.
+A sensitive port is a finding when any IPv4 or IPv6 source range is not fully inside private space (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`, and `fc00::/7`). A range that only partly overlaps private space, and a CIDR that cannot be parsed, are findings. A sensitive port stays a finding on a security group tagged `public=true`. Any other world-open (`0.0.0.0/0` or `::/0`) port is a finding unless the security group is tagged `public=true`. 80 and 443 pass only when tagged. The port list is `src/policy/sensitive-ports.ts`. `classifyIngress()` in `src/policy/classify-ingress.ts` applies it.
 
 `close-open-port` calls `classifyIngress()` on the named rule, with the security group tags, before it revokes. A verdict of `ok` is refused and not revoked. The result is `ok: false`, `status` `refused`, and `reason` `rule is not a finding under the port rule`, plus the same action and rule fields as a successful result. A sensitive port on a `public=true` group is still revoked. The handler still requires `auto-remediate=true`. The policy is unchanged.
 

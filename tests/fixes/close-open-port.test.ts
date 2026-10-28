@@ -447,10 +447,10 @@ describe('close-open-port handler', () => {
     expect(revoke.input.IpPermissions[0]).not.toHaveProperty('ToPort');
   });
 
-  it('refuses a non-world all-traffic rule through the same not-a-finding path', async () => {
-    const { client, send } = fakeClient([allTrafficRule({ CidrIpv4: '192.0.2.8/32' })]);
+  it('refuses a private all-traffic rule through the same not-a-finding path', async () => {
+    const { client, send } = fakeClient([allTrafficRule({ CidrIpv4: '10.0.0.0/8' })]);
 
-    const result = await handleCloseOpenPort({ ...ALL_EVENT, cidr: '192.0.2.8/32', apply: true }, client);
+    const result = await handleCloseOpenPort({ ...ALL_EVENT, cidr: '10.0.0.0/8', apply: true }, client);
 
     expect(result).toEqual({
       ok: false,
@@ -461,7 +461,7 @@ describe('close-open-port handler', () => {
       caseId: 'case-demo-1',
       securityGroupId: 'sg-demo0001',
       protocol: '-1',
-      cidr: '192.0.2.8/32',
+      cidr: '10.0.0.0/8',
     });
     expect(revoked(send)).toEqual([]);
   });
