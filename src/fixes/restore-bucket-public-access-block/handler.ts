@@ -15,8 +15,9 @@
  *
  * What Grok decides: nothing.
  * What code decides: whether the bucket name is valid, whether the bucket
- * is tagged purpose=ag-demo-synthetic, whether all four Block Public Access
- * flags are already true, and whether the one put is sent.
+ * is tagged purpose=ag-demo-synthetic, whether it is tagged
+ * auto-remediate=true, whether all four Block Public Access flags are
+ * already true, and whether the one put is sent.
  *
  * The four flags on that put are hardcoded true. This file never sends false.
  */
@@ -38,8 +39,15 @@ export const PUBLIC_ACCESS_BLOCK = {
 } as const;
 
 const PURPOSE = 'ag-demo-synthetic';
+const AUTO_REMEDIATE_TAG_KEY = 'auto-remediate';
+const AUTO_REMEDIATE_TAG_VALUE = 'true';
 const MISSING_TAGS = 'NoSuchTagSet';
 const MISSING_BLOCK = 'NoSuchPublicAccessBlockConfiguration';
+
+type BucketTag = {
+  Key: string;
+  Value: string;
+};
 
 /**
  * ag-demo- plus a legal bucket tail. 9 to 63 characters, lowercase, no
@@ -88,7 +96,7 @@ export async function handler(event: unknown): Promise<FixResult> {
 }
 
 /**
- * Validate the event, require the demo tag, and put the four true flags
+ * Validate the event, require both bucket tags, and put the four true flags
  * only when apply is true and the bucket is not already blocked.
  */
 export async function handleRestoreBucketPublicAccessBlock(
@@ -104,6 +112,14 @@ export async function handleRestoreBucketPublicAccessBlock(
   const tagged = await bucketIsTagged(client, input.bucket);
   if (!tagged.ok) {
     return tagged.failure;
+  }
+  if (!hasAutoRemediateTag(tagged.tags)) {
+    return {
+      ok: false,
+      changed: false,
+      errorCode: 'AutoRemediateTagRequired',
+      errorMessage: `bucket must be tagged ${AUTO_REMEDIATE_TAG_KEY}=${AUTO_REMEDIATE_TAG_VALUE}`,
+    };
   }
 
   const blocked = await bucketIsFullyBlocked(client, input.bucket);
@@ -182,7 +198,7 @@ function isDemoBucket(value: string): boolean {
 async function bucketIsTagged(
   client: AwsClient,
   bucket: string,
-): Promise<{ ok: true } | { ok: false; failure: Failure }> {
+): Promise<{ ok: true; tags: BucketTag[] } | { ok: false; failure: Failure }> {
   let described: unknown;
   try {
     described = await client.send(new GetBucketTaggingCommand({ Bucket: bucket }));
@@ -193,7 +209,19 @@ async function bucketIsTagged(
     return { ok: false, failure: { ok: false, changed: false, ...readAwsError(err) } };
   }
 
-  const purpose = readPurpose(described);
+  const tags = readTagSet(described);
+  if (tags === 'bad') {
+    return {
+      ok: false,
+      failure: {
+        ok: false,
+        changed: false,
+        errorCode: 'InvalidResponse',
+        errorMessage: 'GetBucketTagging did not return a tag set',
+      },
+    };
+  }
+  const purpose = purposeValue(tags);
   if (purpose === 'bad') {
     return {
       ok: false,
@@ -208,7 +236,20 @@ async function bucketIsTagged(
   if (purpose !== PURPOSE) {
     return { ok: false, failure: notTagged() };
   }
-  return { ok: true };
+  return { ok: true, tags };
+}
+
+/**
+ * True only when one tag key is exactly auto-remediate and its value is
+ * exactly true. The compare is case-sensitive and does not trim.
+ */
+function hasAutoRemediateTag(tags: readonly BucketTag[]): boolean {
+  for (const tag of tags) {
+    if (tag.Key === AUTO_REMEDIATE_TAG_KEY && tag.Value === AUTO_REMEDIATE_TAG_VALUE) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function notTagged(): Failure {
@@ -220,11 +261,8 @@ function notTagged(): Failure {
   };
 }
 
-/**
- * The purpose tag value, when there is exactly one. undefined means the key
- * is absent. 'bad' means the payload cannot be trusted.
- */
-function readPurpose(payload: unknown): string | undefined | 'bad' {
+/** Parsed tags, or 'bad' when the payload cannot be trusted. */
+function readTagSet(payload: unknown): BucketTag[] | 'bad' {
   if (typeof payload !== 'object' || payload === null) {
     return 'bad';
   }
@@ -233,7 +271,7 @@ function readPurpose(payload: unknown): string | undefined | 'bad' {
     return 'bad';
   }
 
-  let purpose: string | undefined;
+  const tags: BucketTag[] = [];
   for (const item of tagSet) {
     if (typeof item !== 'object' || item === null) {
       return 'bad';
@@ -242,6 +280,18 @@ function readPurpose(payload: unknown): string | undefined | 'bad' {
     if (typeof tag.Key !== 'string' || typeof tag.Value !== 'string') {
       return 'bad';
     }
+    tags.push({ Key: tag.Key, Value: tag.Value });
+  }
+  return tags;
+}
+
+/**
+ * The purpose tag value, when there is exactly one. undefined means the key
+ * is absent. 'bad' means the payload listed purpose more than once.
+ */
+function purposeValue(tags: readonly BucketTag[]): string | undefined | 'bad' {
+  let purpose: string | undefined;
+  for (const tag of tags) {
     if (tag.Key !== 'purpose') {
       continue;
     }

@@ -11,7 +11,12 @@
       "Sid": "RestorePublicAccessBlock",
       "Effect": "Allow",
       "Action": ["s3:PutBucketPublicAccessBlock"],
-      "Resource": "arn:aws:s3:::ag-demo-*"
+      "Resource": "arn:aws:s3:::ag-demo-*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/auto-remediate": "true"
+        }
+      }
     }
   ]
 }

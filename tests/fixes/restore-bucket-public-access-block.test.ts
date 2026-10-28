@@ -28,7 +28,10 @@ const HANDLER_PATH = path.join(ROOT, 'src/fixes/restore-bucket-public-access-blo
 const FLAGS = ['BlockPublicAcls', 'IgnorePublicAcls', 'BlockPublicPolicy', 'RestrictPublicBuckets'] as const;
 
 const TAGGED = {
-  TagSet: [{ Key: 'purpose', Value: 'ag-demo-synthetic' }],
+  TagSet: [
+    { Key: 'purpose', Value: 'ag-demo-synthetic' },
+    { Key: 'auto-remediate', Value: 'true' },
+  ],
 };
 
 const BLOCKED = {
@@ -110,7 +113,7 @@ describe('restore-bucket-public-access-block handler', () => {
       findingKey: 'cloud:s3_public_access_block_removed',
       action: ACTION,
       summary: 'Turn on all four Block Public Access flags for one bucket',
-      undo: 'Turn those four Block Public Access flags off again for that bucket',
+      undo: 'There is no undo',
     });
     expect(registryKeysMatchAllowList).toBe(true);
     expect(typeof handler).toBe('function');
@@ -123,7 +126,12 @@ describe('restore-bucket-public-access-block handler', () => {
     const policy = JSON.parse(
       readFileSync(path.join(ROOT, 'src/fixes/restore-bucket-public-access-block/policy.json'), 'utf8'),
     ) as {
-      Statement: Array<{ Effect: string; Action: string[]; Resource: string }>;
+      Statement: Array<{
+        Effect: string;
+        Action: string[];
+        Resource: string;
+        Condition?: unknown;
+      }>;
     };
     const actions = policy.Statement.flatMap((statement) => statement.Action);
     expect(actions).toEqual([
@@ -135,6 +143,18 @@ describe('restore-bucket-public-access-block handler', () => {
       expect(statement.Effect).toBe('Allow');
       expect(statement.Resource).toBe('arn:aws:s3:::ag-demo-*');
       expect(statement.Resource).not.toBe('*');
+    }
+    const putStatement = policy.Statement.find((statement) =>
+      statement.Action.includes('s3:PutBucketPublicAccessBlock'),
+    );
+    expect(putStatement?.Condition).toEqual({
+      StringEquals: { 'aws:ResourceTag/auto-remediate': 'true' },
+    });
+    for (const statement of policy.Statement) {
+      if (statement === putStatement) {
+        continue;
+      }
+      expect(statement.Condition).toBeUndefined();
     }
     const fix = JSON.parse(
       readFileSync(path.join(ROOT, 'src/fixes/restore-bucket-public-access-block/fix.json'), 'utf8'),
@@ -295,12 +315,54 @@ describe('restore-bucket-public-access-block handler', () => {
     }
   });
 
+  it.each([
+    ['the tag is missing', []],
+    ['the value is false', [{ Key: 'auto-remediate', Value: 'false' }]],
+    ['the value is True', [{ Key: 'auto-remediate', Value: 'True' }]],
+    ['the key is AUTO-REMEDIATE', [{ Key: 'AUTO-REMEDIATE', Value: 'true' }]],
+    ['the value is empty', [{ Key: 'auto-remediate', Value: '' }]],
+    ['the value has a trailing space', [{ Key: 'auto-remediate', Value: 'true ' }]],
+  ])('refuses when %s, including a dry run, and does not put', async (_label, autoTags) => {
+    const tags = {
+      TagSet: [{ Key: 'purpose', Value: 'ag-demo-synthetic' }, ...autoTags],
+    };
+    for (const apply of [undefined, false, true] as const) {
+      const { client, send } = fakeClient({ tags });
+      const event = apply === undefined ? EVENT : { ...EVENT, apply };
+      const result = await handleRestoreBucketPublicAccessBlock(event, client);
+
+      expect(result).toEqual({
+        ok: false,
+        changed: false,
+        errorCode: 'AutoRemediateTagRequired',
+        errorMessage: 'bucket must be tagged auto-remediate=true',
+      });
+      expect(puts(send)).toEqual([]);
+      expect(send.mock.calls.every((call) => call[0] instanceof GetBucketTaggingCommand)).toBe(true);
+    }
+  });
+
+  it('proceeds only when auto-remediate is exactly true', async () => {
+    const { client, send } = fakeClient();
+
+    const dry = await handleRestoreBucketPublicAccessBlock(EVENT, client);
+    const applied = await handleRestoreBucketPublicAccessBlock({ ...EVENT, apply: true }, client);
+
+    expect(dry).toMatchObject({ ok: true, changed: false, dryRun: true, reason: 'dry_run' });
+    expect(applied).toMatchObject({ ok: true, changed: true, dryRun: false, reason: 'restored' });
+    expect(puts(send)).toHaveLength(1);
+    expect((puts(send)[0] as PutPublicAccessBlockCommand).input.PublicAccessBlockConfiguration).toEqual({
+      ...PUBLIC_ACCESS_BLOCK,
+    });
+  });
+
   it('accepts the demo tag alongside another tag', async () => {
     const { client, send } = fakeClient({
       tags: {
         TagSet: [
           { Key: 'owner', Value: 'demo' },
           { Key: 'purpose', Value: 'ag-demo-synthetic' },
+          { Key: 'auto-remediate', Value: 'true' },
         ],
       },
     });
