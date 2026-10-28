@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Access Guardian slides</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/dist/reveal.css" integrity="sha384-tK61vs+AeByBmiQ/i6CLgp/PbaaoB/k7M4J5mlX70GVtBPGUk5avjbXhSwhsf3fS" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/dist/theme/white.css" integrity="sha384-flndleNngtsjA21lEvW9JpgOND8agbgm+1EI+KQFbNa0OcOWGydVQbh+G3H2E1dI" crossorigin="anonymous">
+  <style>
+    .reveal .mermaid { background: #fff; }
+    .reveal .mermaid svg { max-width: 100%; max-height: 520px; }
+    .reveal section .fine { font-size: 0.62em; }
+    #status:empty { display: none; }
+    #status { margin: 0; padding: 0.5rem 1rem; background: #fff4f4; color: #b00020; }
+  </style>
+</head>
+<body>
+  <p id="status" role="status"></p>
+  <div class="reveal">
+    <div class="slides">
+      <section data-markdown="slides.md"></section>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/dist/reveal.js" integrity="sha384-rZIIVPQD/+U9IL3I62KrBHuVtPgYv+xdXvER5RBiVQRszJEJfLKRrcrZwI7fhcHT" crossorigin="anonymous" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/plugin/markdown/markdown.js" integrity="sha384-ee/QmFMUwC+YUuswSDzliKj27Anp3rSblE1ujBcPKyrzwG15Daa1GL6JcNbPg/oG" crossorigin="anonymous" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.min.js" integrity="sha384-EOXBFmc3gx5mb+vn0vPvvGqACToJD24hhacX5Yx+8NUUQrHIle/Qi5Bg9o3zKwW2" crossorigin="anonymous" defer></script>
+  <script src="slides.js" defer></script>
+</body>
+</html>
