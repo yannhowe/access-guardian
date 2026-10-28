@@ -1,0 +1,22 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadRules",
+      "Effect": "Allow",
+      "Action": ["ec2:DescribeSecurityGroupRules"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "RevokeOneIngress",
+      "Effect": "Allow",
+      "Action": ["ec2:RevokeSecurityGroupIngress"],
+      "Resource": "arn:aws:ec2:*:*:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/purpose": "ag-demo-synthetic"
+        }
+      }
+    }
+  ]
+}

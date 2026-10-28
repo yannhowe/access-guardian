@@ -39,8 +39,8 @@ If `fromPort` and `toPort` are the same single port, the starter fix can plan a 
 1. AG Lead opens the case from the webhook body or from Slack.
 2. AG Context checks whether a change is reasonable to make now: who owns the resource, who is on call, whether a freeze is active. Context uses structured records. Context does not call Grok and does not change AWS.
 3. AG Change checks whether an approved request covers this one finding, and whether the fix key is on the allow-list. One finding, one resource. A wildcard request is too broad. If `close-open-port` is already registered, Change reuses it. If the key is allowed but not built, Change asks Builder to write it. If the key is not on the list, a human handles it. Change does not call Grok and does not run the fix.
-4. AG Lead shows Yann the plan: the one action `RevokeSecurityGroupIngress`, the exact rule, and the dry-run result (`applied: false`). Lead does not apply it.
-5. Yann's yes. This is the human gate. Our code may then pass `{ apply: true }`. The event JSON cannot set that flag. Without the yes, the client is not called, and Builder does not start.
+4. AG Lead shows Yann the plan: the Lambda `ag-fix-close-open-port`, the one action `ec2:RevokeSecurityGroupIngress`, and the dry-run result (`changed: false`). Lead does not set `apply`.
+5. Yann's yes. This is the human gate. The bot may then invoke the same Lambda with `apply` set to true. Without the yes, the invoke stays a dry run, and Builder does not start.
 6. AG Builder, a Cursor cloud agent, opens a pull request in this repo. A new fix follows `.cursor/skills/writing-remediators/SKILL.md`. The advisory reader follows `.cursor/skills/writing-extractors/SKILL.md`. The guard test must pass. Builder does not merge.
 7. The pull request goes back to AG Lead, who checks the allow-list entry, the single action, and the pasted `npm test` and `npx tsc --noEmit` output. Yann merges only when he explicitly asks. That merge is the second human gate.
 
@@ -61,8 +61,9 @@ The client reads `XAI_API_KEY` from the environment. `XAI_MODEL` overrides the d
 ## What to show in the code
 
 - `src/fixes/allow-list.ts`: one entry, one action, one undo.
-- `src/fixes/close-open-port.ts`: `ACTION` is `RevokeSecurityGroupIngress`. `closeOpenPort` returns the plan unless `apply` is `true`.
-- `tests/fixes/close-open-port.test.ts`: a fake AWS client. Default is dry-run. One `send` when apply is set. Bad input does not send.
+- `src/fixes/close-open-port/`: the Lambda handler, its policy, and `fix.json`. Dry-run unless `apply` is true. A real change sets `changed: true`.
+- `infra/main.tf`: one Terraform name per fix. The module always sets the permissions boundary.
+- `tests/fixes/close-open-port.test.ts`: a fake AWS client. Default is dry-run. One revoke when apply is set. Bad input does not call AWS.
 - `tests/guard.test.ts`: the tree passes, and a fix off the list, a second action, or an xAI call outside the client fails.
 - `src/extractors/advisory/README.md`: the empty advisory reader slot.
 - `inventory/services.json`: synthetic services and the exact npm versions they run. Teammates read it to see whether an advisory package is installed.

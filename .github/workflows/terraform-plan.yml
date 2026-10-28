@@ -1,0 +1,130 @@
+name: terraform-plan
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: terraform-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  guardrails:
+    runs-on: ubuntu-latest
+    outputs:
+      plan: ${{ steps.paths.outputs.plan }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check protected paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HAS_GUARD_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'guard-change') }}
+        run: node scripts/check-protected-paths.mjs
+
+      - name: Decide whether to plan
+        id: paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          files="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
+          plan=false
+          if printf '%s\n' "$files" | grep -Eq '^(src/fixes/|infra/|scripts/build-fixes\.sh|\.github/workflows/terraform-)'; then
+            plan=true
+          fi
+          echo "plan=$plan" >> "$GITHUB_OUTPUT"
+
+  plan:
+    needs: guardrails
+    if: needs.guardrails.outputs.plan == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build fix zips
+        run: bash scripts/build-fixes.sh
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AG_TF_PLAN_ROLE_ARN }}
+          aws-region: ap-southeast-1
+
+      - name: Terraform fmt
+        run: terraform -chdir=infra fmt -check -recursive
+
+      - name: Terraform init
+        run: |
+          terraform -chdir=infra init -input=false \
+            -backend-config="bucket=${{ vars.AG_TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ vars.AG_TF_STATE_KEY }}" \
+            -backend-config="region=${{ vars.AG_TF_STATE_REGION }}" \
+            -backend-config="dynamodb_table=${{ vars.AG_TF_LOCK_TABLE }}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform validate
+        run: terraform -chdir=infra validate
+
+      - name: Terraform plan
+        id: plan
+        env:
+          TF_VAR_permissions_boundary_arn: ${{ vars.AG_FIX_BOUNDARY_ARN }}
+        run: |
+          set -o pipefail
+          terraform -chdir=infra plan -input=false -no-color -out=tfplan
+          terraform -chdir=infra show -no-color tfplan > "$GITHUB_WORKSPACE/plan.txt"
+
+      - name: Comment on the pull request
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let plan = fs.readFileSync('plan.txt', 'utf8');
+            const max = 60000;
+            if (plan.length > max) {
+              plan = plan.slice(0, max) + '\n... plan truncated ...';
+            }
+            const body = [
+              'Terraform plan for the fix Lambdas.',
+              '',
+              '```',
+              plan,
+              '```',
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });

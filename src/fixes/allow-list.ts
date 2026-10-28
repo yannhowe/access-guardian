@@ -1,24 +1,32 @@
 /**
  * Fixes this repo is willing to automate.
  *
- * Each entry is one small change to one resource, with the undo written next to it.
- * A fix that is not on this list must not be built or run here. A human handles it.
+ * Each key is a folder under src/fixes. The guard checks that folder's
+ * fix.json and policy.json against this list.
  *
- * Belongs on the list: one hardcoded AWS action, an obvious undo, and no data loss.
- * The starter is closing one ingress rule on one security group.
+ * Belongs on the list: one close or tighten action on one resource, with an
+ * obvious undo, and no data loss.
  *
- * Does not belong: deleting resources, rotating credentials, stopping instances,
- * changing VPCs or routes, account-wide settings, or anything that touches
- * more than one resource.
+ * Does not belong: opening access, deleting resources, rotating credentials,
+ * stopping instances, or anything that touches more than one resource.
  *
  * Adding a key is a human-reviewed change. Call it out at the top of the pull request.
  */
 export const ALLOWED_FIXES = {
   'close-open-port': {
-    action: 'RevokeSecurityGroupIngress',
+    findingKey: 'cloud:open_port',
+    action: 'ec2:RevokeSecurityGroupIngress',
     summary: 'Revoke one ingress rule on one security group',
     undo: 'Authorize that same ingress rule again',
   },
-} as const satisfies Record<string, { readonly action: string; readonly summary: string; readonly undo: string }>;
+} as const satisfies Record<
+  string,
+  {
+    readonly findingKey: string;
+    readonly action: string;
+    readonly summary: string;
+    readonly undo: string;
+  }
+>;
 
 export type AllowedFixKey = keyof typeof ALLOWED_FIXES;

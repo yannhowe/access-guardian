@@ -1,0 +1,9 @@
+# Yann reviews changes to the gates. A new fix does not edit these paths.
+# The plan workflow fails on them unless the pull request has the guard-change label.
+
+/src/guard/ @yannhowe
+/tests/guard* @yannhowe
+/infra/modules/ @yannhowe
+/.github/ @yannhowe
+/src/fixes/allow-list.ts @yannhowe
+/.cursor/ @yannhowe
