@@ -2,6 +2,6 @@
   "name": "contain-iam-user",
   "findingKey": "identity:on_leave_user_activity",
   "action": "iam:PutUserPolicy",
-  "description": "Attach a deny-all inline policy to one on-leave IAM user",
+  "description": "Attach a deny-all inline policy to one IAM user who is On leave or Not in HR",
   "callsGrok": false
 }

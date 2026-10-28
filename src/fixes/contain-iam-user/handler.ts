@@ -17,11 +17,11 @@
  * not call Grok.
  *
  * What Grok decides: nothing.
- * What code decides: whether hrStatus is exactly On leave, whether
- * userName is a plain IAM user name, whether the user exists and is
- * tagged auto-remediate=true and purpose=ag-demo-synthetic, whether the
- * user is an admin, whether ag-containment-deny is already that deny
- * document, and whether the one put is sent.
+ * What code decides: whether hrStatus is exactly On leave or exactly
+ * Not in HR, whether userName is a plain IAM user name, whether the user
+ * exists and is tagged auto-remediate=true and purpose=ag-demo-synthetic,
+ * whether the user is an admin, whether ag-containment-deny is already
+ * that deny document, and whether the one put is sent.
  */
 import {
   GetUserCommand,
@@ -90,7 +90,7 @@ export type AwsClient = {
 export type ContainIamUserInput = {
   caseId: string;
   userName: string;
-  hrStatus: 'On leave';
+  hrStatus: 'On leave' | 'Not in HR';
   apply: boolean;
 };
 
@@ -230,6 +230,15 @@ function refused(reason: string): GuardRefusal {
   return { ok: false, status: 'refused', changed: false, reason };
 }
 
+const HR_STATUS_REFUSAL = 'hrStatus must be exactly On leave or exactly Not in HR';
+
+function readHrStatus(value: unknown): 'On leave' | 'Not in HR' | undefined {
+  if (value === 'On leave' || value === 'Not in HR') {
+    return value;
+  }
+  return undefined;
+}
+
 function parseEvent(event: unknown): { ok: true; value: Planned } | { ok: false; reason: string } {
   if (typeof event !== 'object' || event === null || Array.isArray(event)) {
     return { ok: false, reason: 'input must be an object' };
@@ -248,8 +257,9 @@ function parseEvent(event: unknown): { ok: true; value: Planned } | { ok: false;
   if (userName !== undefined) {
     return { ok: false, reason: userName };
   }
-  if (record.hrStatus !== 'On leave') {
-    return { ok: false, reason: 'hrStatus must be exactly On leave' };
+  const hrStatus = readHrStatus(record.hrStatus);
+  if (hrStatus === undefined) {
+    return { ok: false, reason: HR_STATUS_REFUSAL };
   }
   if ('apply' in record && typeof record.apply !== 'boolean') {
     return { ok: false, reason: 'apply must be a boolean' };
@@ -260,7 +270,7 @@ function parseEvent(event: unknown): { ok: true; value: Planned } | { ok: false;
     value: {
       caseId: record.caseId,
       userName: record.userName as string,
-      hrStatus: 'On leave',
+      hrStatus,
       apply: record.apply === true,
     },
   };
