@@ -11,13 +11,67 @@ Cloud teams already have too many changes to review, and agentic tools will keep
 The diagram uses the same edges as [site/slides.md](site/slides.md).
 
 ```mermaid
-flowchart LR
-  cloudtrail[CloudTrail] --> eventbridge[EventBridge] --> lead[AG Lead]
-  lead --> notion["Notion<br/>(AG cases)"]
-  lead <--> slack[Slack] <--> yann["Yann<br/>(human)"]
-  lead --> context["AG Context<br/>(IAM, HR, tags)"] --> change[AG Change]
-  change -->|fix exists| lambda["ag-fix Lambda<br/>(dry run,<br/>then apply)"] --> aws[AWS]
-  change -->|no fix| builder[AG Builder] --> pr[GitHub PR] --> merges["Yann merges"] --> deploy["Terraform deploys<br/>the Lambda"]
+flowchart TD
+  subgraph intakeBox [Intake]
+    cloudtrail[CloudTrail]
+    sgRule["ag-cloudtrail<br/>sg-ingress-to-lead"]
+    s3Rule["ag-cloudtrail<br/>s3-public-access<br/>to-lead"]
+    apiDest["API destination<br/>ag-lead-webhook"]
+    cloudtrail --> sgRule --> apiDest
+    cloudtrail --> s3Rule --> apiDest
+  end
+
+  subgraph botsBox [Bots]
+    lead[AG Lead]
+    notion["Notion<br/>AG cases"]
+    slackCases["Slack<br/>#platform-security"]
+    context["AG Context<br/>IAM, HR, tags"]
+    changeBot[AG Change]
+    builder[AG Builder]
+    slackBuild["Slack<br/>#platform-security-<br/>build"]
+    yann["Yann<br/>human"]
+  end
+
+  subgraph deployBox [Deploy]
+    pr[GitHub PR]
+    merges[Yann merges]
+    applyWf["terraform-<br/>apply.yml"]
+    terraform["Terraform deploys<br/>the Lambdas"]
+    pr --> merges --> applyWf --> terraform
+  end
+
+  subgraph runBox [Run a fix]
+    closeFn["ag-fix-<br/>close-open-port"]
+    restoreFn["ag-fix-restore-<br/>bucket-public-<br/>access-block"]
+    removeFn["ag-fix-remove-<br/>bucket-public-<br/>access-block"]
+    containFn["ag-fix-<br/>contain-iam-user"]
+  end
+
+  subgraph gatesBox [Guardrails]
+    allowList[allow-list]
+    guardAudit["src/guard audit"]
+    optIn["opt-in tags<br/>auto-remediate=true<br/>purpose<br/>ag-demo-synthetic"]
+    portRule["sensitive port<br/>outside private<br/>range is a finding"]
+    publicTag["public=true<br/>with both<br/>opt-in tags<br/>opens one bucket"]
+    autoRun["auto-remediate when<br/>guards and tags pass<br/>dry run, then apply"]
+    humanAsk["A human is asked<br/>only for intent,<br/>a build, a merge,<br/>or a guard change"]
+    allowList --> guardAudit --> optIn --> autoRun
+  end
+
+  apiDest --> lead
+  lead --> notion
+  lead <--> slackCases
+  slackCases <--> yann
+  yann --- humanAsk
+  lead --> context --> changeBot
+  changeBot -->|"fix exists"| autoRun
+  autoRun -->|"matching fix"| runBox
+  changeBot -->|"no fix"| builder
+  builder --> slackBuild
+  builder --> pr
+  terraform -->|"deploys"| runBox
+  portRule --> closeFn
+  publicTag --> removeFn
 ```
 
 CloudTrail events go through EventBridge to AG Lead. Lead records the case in Notion under AG cases and talks with Yann in Slack. Cases are discussed in #platform-security. Lead asks AG Context for IAM, HR, and tags, and Context passes the case to AG Change. When a fix exists, Change runs the ag-fix Lambda. The Lambda does a dry run, then applies, and the write goes to AWS. When no fix exists, Change asks AG Builder. Builder opens a GitHub pull request. Build discussion is in #platform-security-build. Yann merges, and Terraform deploys the Lambda.
