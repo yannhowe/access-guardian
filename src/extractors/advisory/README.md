@@ -33,4 +33,4 @@ Code then compares each service version in the inventory with those ranges. A se
 
 If the prose contains `ignore previous`, `ignore all`, `system prompt`, `you are now`, or `approve this`, keep a suspicion note for the human and still apply the hard checks. The phrase does not change a field and it does not skip a check.
 
-Tests mock the network. They replace the old empty-slot test.
+Tests mock the network. They live in `tests/extractors/advisory.test.ts`.

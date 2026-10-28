@@ -25,12 +25,13 @@ Create a customer managed policy named `ag-fix-boundary`. Every fix role is crea
 
 It may allow:
 
-- `ec2:DescribeSecurityGroupRules`
+- `ec2:DescribeSecurityGroupRules` and `ec2:DescribeSecurityGroups`
 - `ec2:RevokeSecurityGroupIngress` on security groups
-- `s3:PutBucketPublicAccessBlock` for the bucket public access block fixes. AWS authorizes DeletePublicAccessBlock with this same action. The only fix that may remove the block is the one for a bucket tagged intended-public=true, auto-remediate=true, and purpose=ag-demo-synthetic
+- `s3:GetBucketTagging` and `s3:GetBucketPublicAccessBlock`
+- `s3:PutBucketPublicAccessBlock` for the bucket public access block fixes. AWS authorizes `DeletePublicAccessBlock` with this same action. The only fix that may remove the block is the one for a bucket tagged `intended-public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic`
 - `logs:CreateLogStream` and `logs:PutLogEvents` on `/aws/lambda/ag-fix-*`
 
-It must not allow `Authorize*`, `Delete*PublicAccessBlock`, `iam:*`, or `Put*Policy`.
+It must not allow `Authorize*`, `Delete*PublicAccessBlock`, `iam:*`, or `Put*Policy`. The remove fix still uses IAM action `s3:PutBucketPublicAccessBlock`. The boundary does not gain `s3:DeleteBucketPublicAccessBlock`.
 
 Put the policy ARN in the repository variable `AG_FIX_BOUNDARY_ARN`. Terraform refuses any other policy name.
 
@@ -51,8 +52,14 @@ The workflows pass those through `-backend-config`.
 
 The Grok Bot teammates invoke a fix. They do not deploy it. Give them `lambda:InvokeFunction` on `ag-fix-*` only. They do not get `ec2:*`, `iam:*`, or permission to change the function.
 
+`ag-bot-invoker` is created outside Terraform (manual). AG Lead assumes it. Its permission is `lambda:InvokeFunction` on `ag-fix-*`. `ag-reader` handles read-only checks and is created outside Terraform (manual). TODO: move both roles into `infra/`.
+
 A dry run omits `apply` or sets it to false. After Yann's yes, the bot invokes the same function with `apply` set to true.
 
 ## Demo resources
 
-Tag any security group this demo may change with `purpose=ag-demo-synthetic`. The close-open-port role can revoke ingress only on a group with that tag. A group without the tag fails the revoke, and the Lambda returns that AWS error.
+Tag any security group this demo may change with `purpose=ag-demo-synthetic` and `auto-remediate=true`. The close-open-port role can revoke ingress only when both tags match. The handler refuses, including on a dry run that would revoke, unless `auto-remediate=true` exactly, and it returns `MissingAutoRemediateTag`. A missing `purpose` tag fails the revoke in IAM, and the Lambda returns that AWS error.
+
+A bucket the restore fix may change uses a name that starts with `ag-demo-`. The handler requires `purpose=ag-demo-synthetic` and `auto-remediate=true`, and it leaves a bucket tagged `intended-public=true` unchanged. The restore role is scoped to `arn:aws:s3:::ag-demo-*` and has no tag condition in IAM.
+
+The remove fix accepts only bucket `ag-demo-public-10281729`. The handler requires `intended-public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic`. IAM on that role requires `intended-public=true` for the mutating action, on that one bucket ARN.
