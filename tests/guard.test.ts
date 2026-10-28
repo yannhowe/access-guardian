@@ -185,18 +185,27 @@ describe('guard', () => {
       summary: 'Remove Block Public Access on the one bucket tagged public=true',
       undo: 'There is no undo',
     });
-    for (const entry of Object.values(ALLOWED_FIXES)) {
+    for (const [name, entry] of Object.entries(ALLOWED_FIXES)) {
       expect(entry.findingKey).toMatch(/^[a-z0-9_]+:[a-z0-9_]+$/);
       expect(entry.action).toMatch(/^[a-z0-9]+:[A-Za-z0-9]+$/);
       expect(entry.summary.length).toBeGreaterThan(0);
       expect(entry.undo.length).toBeGreaterThan(0);
+      if (name !== 'contain-iam-user') {
+        expect('findingKeys' in entry).toBe(false);
+      }
     }
     expect(ALLOWED_FIXES['contain-iam-user']).toEqual({
       findingKey: 'identity:on_leave_user_activity',
+      findingKeys: ['identity:on_leave_user_activity', 'identity:suspicious_user_activity'],
       action: 'iam:PutUserPolicy',
       summary: 'Attach a deny-all inline policy to one on-leave IAM user',
       undo: 'Delete the inline policy ag-containment-deny',
     });
+    const containFix = JSON.parse(
+      readFileSync(path.join(root, 'src/fixes/contain-iam-user/fix.json'), 'utf8'),
+    ) as { findingKey: string; findingKeys: readonly string[] };
+    expect(containFix.findingKey).toBe(ALLOWED_FIXES['contain-iam-user'].findingKey);
+    expect(containFix.findingKeys).toEqual(ALLOWED_FIXES['contain-iam-user'].findingKeys);
     expect(CLOSE_ONLY_ACTIONS).toContain('ec2:RevokeSecurityGroupIngress');
     expect(CLOSE_ONLY_ACTIONS).toContain('s3:PutBucketPublicAccessBlock');
     expect(CLOSE_ONLY_ACTIONS).toContain('iam:PutUserPolicy');

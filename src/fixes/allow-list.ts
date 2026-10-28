@@ -2,7 +2,9 @@
  * Fixes this repo is willing to automate.
  *
  * Each key is a folder under src/fixes. The guard checks that folder's
- * fix.json and policy.json against this list.
+ * fix.json and policy.json against this list. Every fix has one findingKey
+ * string, because the guard compares that field. contain-iam-user is the
+ * one fix with findingKeys, a two-key list. No other fix has that field.
  *
  * A fix returns a resource to its recorded intended state. A fix may open
  * access only when that return is proven both by the public=true
@@ -19,6 +21,21 @@
  *
  * Adding a key is a human-reviewed change. Call it out at the top of the pull request.
  */
+type SingleKeyFix = {
+  readonly findingKey: string;
+  readonly action: string;
+  readonly summary: string;
+  readonly undo: string;
+};
+
+type ContainIamUserFix = SingleKeyFix & {
+  readonly findingKey: 'identity:on_leave_user_activity';
+  readonly findingKeys: readonly [
+    'identity:on_leave_user_activity',
+    'identity:suspicious_user_activity',
+  ];
+};
+
 export const ALLOWED_FIXES = {
   'close-open-port': {
     findingKey: 'cloud:open_port',
@@ -40,18 +57,16 @@ export const ALLOWED_FIXES = {
   },
   'contain-iam-user': {
     findingKey: 'identity:on_leave_user_activity',
+    findingKeys: ['identity:on_leave_user_activity', 'identity:suspicious_user_activity'],
     action: 'iam:PutUserPolicy',
     summary: 'Attach a deny-all inline policy to one on-leave IAM user',
     undo: 'Delete the inline policy ag-containment-deny',
   },
-} as const satisfies Record<
-  string,
-  {
-    readonly findingKey: string;
-    readonly action: string;
-    readonly summary: string;
-    readonly undo: string;
-  }
->;
+} as const satisfies {
+  readonly 'close-open-port': SingleKeyFix;
+  readonly 'restore-bucket-public-access-block': SingleKeyFix;
+  readonly 'remove-bucket-public-access-block': SingleKeyFix;
+  readonly 'contain-iam-user': ContainIamUserFix;
+};
 
 export type AllowedFixKey = keyof typeof ALLOWED_FIXES;
