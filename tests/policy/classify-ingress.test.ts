@@ -3,6 +3,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  cidrFamily,
   classifyIngress,
   type IngressRule,
   type IngressVerdict,
@@ -304,5 +305,107 @@ describe('sensitive ports outside private space', () => {
     expect(classifyIngress(rule({ fromPort: 443, toPort: 443, ipv4Cidrs: ['not-a-cidr'], ipv6Cidrs: [] }), [])).toBe(
       'ok',
     );
+  });
+});
+
+describe('tcp and udp port ranges', () => {
+  it('tcp 20-25 from a public CIDR is a finding because it covers 22', () => {
+    expect(
+      classifyIngress(
+        rule({ protocol: 'tcp', fromPort: 20, toPort: 25, ipv4Cidrs: ['203.0.113.0/24'], ipv6Cidrs: [] }),
+        PUBLIC_TAG,
+      ),
+    ).toBe('finding');
+  });
+
+  it('udp 20-25 from a public CIDR is a finding', () => {
+    expect(
+      classifyIngress(
+        rule({ protocol: 'udp', fromPort: 20, toPort: 25, ipv4Cidrs: ['203.0.113.0/24'], ipv6Cidrs: [] }),
+        [],
+      ),
+    ).toBe('finding');
+  });
+
+  it('tcp 20-25 from a private CIDR is ok', () => {
+    expect(
+      classifyIngress(
+        rule({ fromPort: 20, toPort: 25, ipv4Cidrs: ['10.1.0.0/16'], ipv6Cidrs: [] }),
+        PUBLIC_TAG,
+      ),
+    ).toBe('ok');
+  });
+
+  it('tcp 20-25 treats ::/0 as world-open and other non-private IPv6 as outside private space', () => {
+    expect(
+      classifyIngress(rule({ fromPort: 20, toPort: 25, ipv4Cidrs: [], ipv6Cidrs: ['::/0'] }), PUBLIC_TAG),
+    ).toBe('finding');
+    expect(
+      classifyIngress(rule({ fromPort: 20, toPort: 25, ipv4Cidrs: [], ipv6Cidrs: ['2001:db8::/32'] }), []),
+    ).toBe('finding');
+    expect(
+      classifyIngress(rule({ fromPort: 20, toPort: 25, ipv4Cidrs: [], ipv6Cidrs: ['fd00::/8'] }), PUBLIC_TAG),
+    ).toBe('ok');
+  });
+
+  it('tcp 8000-8100 covers sensitive port 8080, so a public CIDR is a finding', () => {
+    expect(SENSITIVE_PORTS).toContain(8080);
+    expect(
+      classifyIngress(
+        rule({ fromPort: 8000, toPort: 8100, ipv4Cidrs: ['203.0.113.0/24'], ipv6Cidrs: [] }),
+        PUBLIC_TAG,
+      ),
+    ).toBe('finding');
+    expect(
+      classifyIngress(
+        rule({ fromPort: 8000, toPort: 8100, ipv4Cidrs: ['0.0.0.0/0'], ipv6Cidrs: [] }),
+        PUBLIC_TAG,
+      ),
+    ).toBe('finding');
+  });
+
+  it('a range that covers no sensitive port follows the non-sensitive rule', () => {
+    expect(SENSITIVE_PORTS.filter((port) => port >= 10000 && port <= 10010)).toEqual([]);
+    const quiet = { fromPort: 10000, toPort: 10010 };
+    expect(classifyIngress(rule({ ...quiet, ipv4Cidrs: ['203.0.113.0/24'], ipv6Cidrs: [] }), [])).toBe('ok');
+    expect(classifyIngress(rule({ ...quiet, ipv4Cidrs: ['0.0.0.0/0'], ipv6Cidrs: [] }), PUBLIC_TAG)).toBe('ok');
+    expect(classifyIngress(rule({ ...quiet, ipv4Cidrs: ['0.0.0.0/0'], ipv6Cidrs: [] }), [])).toBe('finding');
+    expect(classifyIngress(rule({ ...quiet, ipv4Cidrs: [], ipv6Cidrs: ['::/0'] }), [])).toBe('finding');
+    expect(classifyIngress(rule({ ...quiet, ipv4Cidrs: [], ipv6Cidrs: ['::/0'] }), PUBLIC_TAG)).toBe('ok');
+    expect(classifyIngress(rule({ ...quiet, ipv4Cidrs: [], ipv6Cidrs: ['2001:db8::/32'] }), [])).toBe('ok');
+  });
+
+  it('protocol -1 stays a finding from a public CIDR when the ports would not be sensitive', () => {
+    expect(
+      classifyIngress(
+        rule({
+          protocol: '-1',
+          fromPort: 10000,
+          toPort: 10010,
+          ipv4Cidrs: ['203.0.113.0/24'],
+          ipv6Cidrs: [],
+        }),
+        PUBLIC_TAG,
+      ),
+    ).toBe('finding');
+  });
+});
+
+describe('cidrFamily', () => {
+  it('accepts one IPv4 or IPv6 CIDR and rejects anything else', () => {
+    expect(cidrFamily('0.0.0.0/0')).toBe('ipv4');
+    expect(cidrFamily('203.0.113.0/24')).toBe('ipv4');
+    expect(cidrFamily('10.0.0.0/8')).toBe('ipv4');
+    expect(cidrFamily('::/0')).toBe('ipv6');
+    expect(cidrFamily('2001:db8::/32')).toBe('ipv6');
+    expect(cidrFamily('fd00::/8')).toBe('ipv6');
+    expect(cidrFamily('FD00::/8')).toBe('ipv6');
+    expect(cidrFamily('any')).toBeUndefined();
+    expect(cidrFamily('10.0.0.0/33')).toBeUndefined();
+    expect(cidrFamily('010.0.0.0/8')).toBeUndefined();
+    expect(cidrFamily('::/129')).toBeUndefined();
+    expect(cidrFamily('gggg::/64')).toBeUndefined();
+    expect(cidrFamily('2001:db8::')).toBeUndefined();
+    expect(cidrFamily('')).toBeUndefined();
   });
 });
