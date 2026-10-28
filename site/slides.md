@@ -10,7 +10,7 @@ Automated triage and fixes for risky cloud changes.
 
 - Cloud teams already have too many changes to review, and agentic tools will keep adding more.
 - Checking whether a change is legitimate is slow, so real risk gets lost in the volume.
-- Red flags: a user on leave making changes, a bucket's public or private state flipped against its intent, a sensitive port opened to any outside range.
+- Red flags: a user on leave or not in HR making changes, a bucket's public or private state flipped against its intent, a sensitive port opened to any outside range.
 
 **Assumptions**
 
@@ -53,17 +53,17 @@ flowchart TD
   end
 
   subgraph runBox [Run a fix]
-    closeFn["ag-fix-<br/>close-open-port"]
+    closeFn["ag-fix-<br/>close-open-port<br/>one exact rule"]
     restoreFn["ag-fix-restore-<br/>bucket-public-<br/>access-block"]
     removeFn["ag-fix-remove-<br/>bucket-public-<br/>access-block"]
-    containFn["ag-fix-<br/>contain-iam-user"]
+    containFn["ag-fix-<br/>contain-iam-user<br/>On leave or<br/>Not in HR"]
   end
 
   subgraph gatesBox [Guardrails]
     allowList[allow-list]
     guardAudit["src/guard audit"]
     optIn["opt-in tags<br/>auto-remediate=true<br/>purpose<br/>ag-demo-synthetic"]
-    portRule["sensitive port<br/>outside private<br/>range is a finding"]
+    portRule["sensitive port,<br/>covering range,<br/>or protocol -1<br/>outside private<br/>space is a finding"]
     publicTag["public=true<br/>with both<br/>opt-in tags<br/>opens one bucket"]
     autoRun["auto-remediate when<br/>guards and tags pass<br/>dry run, then apply"]
     humanAsk["A human is asked<br/>only for intent,<br/>a build, a merge,<br/>or a guard change"]
@@ -86,7 +86,16 @@ flowchart TD
   publicTag --> removeFn
 ```
 
-<p class="fine">Same diagram as the README. The EventBridge rules are created by hand. A fix runs when the guards and the opt-in tags pass. The handler dry-runs unless apply is true. A human is asked for intent, a build, a merge, or a guard change.</p>
+<p class="fine">Same diagram as the README. The EventBridge rules are created by hand and are not in this repo. A fix runs when the guards and the opt-in tags pass. The handler dry-runs unless apply is true. A human is asked for intent, a build, a merge, or a guard change.</p>
+
+---
+
+## On main
+
+- **close-open-port.** One exact revoke: a single port or a from-to range, IPv4 or IPv6, or protocol -1 with no port. A sensitive port, a range that covers one, or protocol -1 is a finding when the source is outside private space.
+- **contain-iam-user.** On leave (`identity:on_leave_user_activity`) or Not in HR (`identity:suspicious_user_activity`). The boundary allows only the six IAM user actions.
+- **Rule edits.** The daily report reads `ModifySecurityGroupRules` and judges each rule with `classifyIngress()`. A malformed edit is `ingress unparsed` and is not treated as ok. The hand-built EventBridge rule is not in this repo.
+- **Daily report.** After apply, set the secret `ag-report-daily-slack-bot-token`. Terraform creates the name and does not set the value.
 
 ---
 
@@ -102,5 +111,3 @@ flowchart TD
 
 - Analyse CloudTrail for the most frequent changes and build the highest-leverage rules first.
 - Block bad changes before they happen, such as public buckets and untagged deploys, with deny policies.
-- Contain-user: a deny-all policy on users who are on leave but still making changes.
-- Flag sensitive ports open to any range outside private address space.

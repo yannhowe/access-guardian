@@ -9,6 +9,7 @@ import {
   buildModelInput,
   handleDailyReport,
   isServiceNoise,
+  judgeModifySecurityGroupRules,
   parseDailyInput,
   type AwsClient,
   type DailyDeps,
@@ -616,6 +617,186 @@ describe('handleDailyReport', () => {
     });
     expect(JSON.stringify(result)).not.toContain('evt-https-tagged');
   });
+
+  it('judges ModifySecurityGroupRules edits with classifyIngress and fails closed', async () => {
+    const pages = [
+      {
+        Events: [
+          trail({
+            eventId: 'evt-wide',
+            eventName: 'ModifySecurityGroupRules',
+            readOnly: 'false',
+            identity: HUMAN,
+            requestParameters: modifyParams({
+              IpProtocol: 'tcp',
+              FromPort: 22,
+              ToPort: 22,
+              CidrIpv4: '0.0.0.0/16',
+            }),
+          }),
+          trail({
+            eventId: 'evt-private-edit',
+            eventName: 'ModifySecurityGroupRules',
+            readOnly: 'false',
+            identity: HUMAN,
+            requestParameters: modifyParams({
+              IpProtocol: 'tcp',
+              FromPort: 22,
+              ToPort: 22,
+              CidrIpv4: '10.0.0.0/8',
+            }),
+          }),
+          trail({
+            eventId: 'evt-ref',
+            eventName: 'ModifySecurityGroupRules',
+            readOnly: 'false',
+            identity: HUMAN,
+            requestParameters: modifyParams({
+              IpProtocol: 'tcp',
+              FromPort: 22,
+              ToPort: 22,
+              ReferencedGroupId: 'sg-demo0002',
+            }),
+          }),
+          trail({
+            eventId: 'evt-v6-range',
+            eventName: 'ModifySecurityGroupRules',
+            readOnly: 'false',
+            identity: HUMAN,
+            requestParameters: modifyParams({
+              IpProtocol: 'tcp',
+              FromPort: 0,
+              ToPort: 22,
+              CidrIpv6: '::/0',
+            }),
+          }),
+          trail({
+            eventId: 'evt-bad-edit',
+            eventName: 'ModifySecurityGroupRules',
+            readOnly: 'false',
+            identity: HUMAN,
+            requestParameters: modifyParams({
+              IpProtocol: 'tcp',
+              ToPort: 22,
+              CidrIpv4: '10.0.0.0/8',
+              Description: 'allow the office',
+            }),
+          }),
+        ],
+      },
+    ];
+    const fetchMock = installFetch({
+      summary: 'Security group rules were edited.',
+      changesByPrincipal: [],
+      suspectedFindings: [
+        { key: 'cloud:open_port', resource: 'wrong-group', reason: 'Edited to a wide range.', eventIds: ['evt-wide'] },
+        { key: 'cloud:open_port', resource: 'wrong-group', reason: 'Edited inside private space.', eventIds: ['evt-private-edit'] },
+        { key: 'cloud:open_port', resource: 'wrong-group', reason: 'Edited to another group.', eventIds: ['evt-ref'] },
+        { key: 'cloud:open_port', resource: 'wrong-group', reason: 'Edited an IPv6 range.', eventIds: ['evt-v6-range'] },
+        { key: 'cloud:open_port', resource: 'wrong-group', reason: 'Edited a rule that did not parse.', eventIds: ['evt-bad-edit'] },
+      ],
+    });
+    const result = await handleDailyReport({ dryRun: true }, deps(cloudtrailOf(pages), secretsOf()));
+
+    expect(result).toMatchObject({
+      ok: true,
+      posted: false,
+      report: {
+        findings: [
+          { key: 'cloud:open_port', resource: 'sg-demo0001', eventIds: ['evt-wide'] },
+          { key: 'cloud:open_port', resource: 'sg-demo0001', eventIds: ['evt-v6-range'] },
+          { key: 'cloud:open_port', resource: 'sg-demo0001', eventIds: ['evt-bad-edit'] },
+        ],
+      },
+    });
+    const shown = modelInput(fetchMock);
+    expect(shown).toContain('0.0.0.0/16');
+    expect(shown).toContain('10.0.0.0/8');
+    expect(shown).toContain('::/0');
+    expect(shown).toContain('referencedGroup=sg-demo0002');
+    expect(shown).toContain('ingress unparsed');
+    expect(shown).not.toContain('allow the office');
+    expectNoSecrets(result);
+    expectNothingLogged();
+  });
+});
+
+describe('judgeModifySecurityGroupRules', () => {
+  it('treats an edit to 0.0.0.0/16 on tcp 22 as a finding', () => {
+    expect(judgeModifySecurityGroupRules(modifyParams({
+      IpProtocol: 'tcp',
+      FromPort: 22,
+      ToPort: 22,
+      CidrIpv4: '0.0.0.0/16',
+    }), [])).toBe('finding');
+  });
+
+  it('does not treat an edit to 10.0.0.0/8 on tcp 22 as a finding', () => {
+    expect(judgeModifySecurityGroupRules(modifyParams({
+      IpProtocol: 'tcp',
+      FromPort: 22,
+      ToPort: 22,
+      CidrIpv4: '10.0.0.0/8',
+    }), [])).toBe('ok');
+    const single = {
+      ModifySecurityGroupRulesRequest: {
+        GroupId: 'sg-demo0001',
+        SecurityGroupRule: {
+          SecurityGroupRuleId: 'sgr-demo0001',
+          SecurityGroupRule: {
+            IpProtocol: 'tcp',
+            FromPort: 22,
+            ToPort: 22,
+            CidrIpv4: '10.0.0.0/8',
+          },
+        },
+      },
+    };
+    expect(judgeModifySecurityGroupRules(single, [])).toBe('ok');
+  });
+
+  it('does not treat an edit to a ReferencedGroupId source as a finding', () => {
+    expect(judgeModifySecurityGroupRules(modifyParams({
+      IpProtocol: 'tcp',
+      FromPort: 22,
+      ToPort: 22,
+      ReferencedGroupId: 'sg-demo0002',
+    }), [])).toBe('ok');
+  });
+
+  it('treats an edit whose range covers 22 from ::/0 as a finding', () => {
+    expect(judgeModifySecurityGroupRules(modifyParams({
+      IpProtocol: 'tcp',
+      FromPort: 0,
+      ToPort: 22,
+      CidrIpv6: '::/0',
+    }), [])).toBe('finding');
+  });
+
+  it('fails closed when an edit is malformed', () => {
+    const missingPort = modifyParams({
+      IpProtocol: 'tcp',
+      ToPort: 22,
+      CidrIpv4: '10.0.0.0/8',
+      Description: 'allow the office',
+    });
+    expect(judgeModifySecurityGroupRules(missingPort, [])).toBe('unparseable');
+
+    const prose = {
+      ModifySecurityGroupRulesRequest: {
+        GroupId: 'sg-demo0001',
+        SecurityGroupRule: {
+          items: [
+            {
+              SecurityGroupRuleId: 'sgr-demo0001',
+              SecurityGroupRule: 'allow the office',
+            },
+          ],
+        },
+      },
+    };
+    expect(judgeModifySecurityGroupRules(prose, [])).toBe('unparseable');
+  });
 });
 
 describe('buildModelInput', () => {
@@ -683,6 +864,22 @@ function bucketParams(bucket: string) {
           Resource: `arn:aws:s3:::${bucket}/*`,
         },
       ],
+    },
+  };
+}
+
+function modifyParams(rule: Record<string, unknown>, groupId = 'sg-demo0001') {
+  return {
+    ModifySecurityGroupRulesRequest: {
+      GroupId: groupId,
+      SecurityGroupRule: {
+        items: [
+          {
+            SecurityGroupRuleId: 'sgr-demo0001',
+            SecurityGroupRule: rule,
+          },
+        ],
+      },
     },
   };
 }
