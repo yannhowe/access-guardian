@@ -14,7 +14,9 @@
       var code = blocks[i];
       var pre = code.parentElement;
       var diagram = document.createElement('div');
-      diagram.className = 'mermaid';
+      // The architecture chart is tall. Scroll that drawing instead of
+      // shrinking it to the 500px cap used by any other diagram.
+      diagram.className = code.textContent.indexOf('flowchart TD') !== -1 ? 'mermaid diagram-scroll' : 'mermaid';
       diagram.textContent = code.textContent;
       if (pre && pre.parentNode) {
         pre.parentNode.replaceChild(diagram, pre);
@@ -60,13 +62,16 @@
     var boxes = document.querySelectorAll('.mermaid foreignObject');
     for (var i = 0; i < boxes.length; i++) {
       var fo = boxes[i];
+      var group = fo.parentNode;
+      if (group && group.classList && group.classList.contains('cluster-label')) {
+        continue;
+      }
       var width = parseFloat(fo.getAttribute('width'));
       if (!width || width <= 0) {
         continue;
       }
       var extra = 32;
       fo.setAttribute('width', String(width + extra));
-      var group = fo.parentNode;
       if (!group || typeof group.getAttribute !== 'function') {
         continue;
       }

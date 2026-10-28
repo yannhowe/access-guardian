@@ -23,16 +23,70 @@ Automated triage and fixes for risky cloud changes.
 ## Architecture
 
 ```mermaid
-flowchart LR
-  cloudtrail[CloudTrail] --> eventbridge[EventBridge] --> lead[AG Lead]
-  lead --> notion["Notion<br/>(cases)"]
-  lead <--> slack[Slack] <--> yann["Yann<br/>(human)"]
-  lead --> context["AG Context<br/>(IAM, HR, tags)"] --> change[AG Change]
-  change -->|fix exists| lambda["ag-fix Lambda<br/>(dry run,<br/>then apply)"] --> aws[AWS]
-  change -->|no fix| builder[AG Builder] --> pr[GitHub PR] --> merges["Yann merges"] --> deploy["Terraform deploys<br/>the Lambda"]
+flowchart TD
+  subgraph intakeBox [Intake]
+    cloudtrail[CloudTrail]
+    sgRule["ag-cloudtrail<br/>sg-ingress-to-lead"]
+    s3Rule["ag-cloudtrail<br/>s3-public-access<br/>to-lead"]
+    apiDest["API destination<br/>ag-lead-webhook"]
+    cloudtrail --> sgRule --> apiDest
+    cloudtrail --> s3Rule --> apiDest
+  end
+
+  subgraph botsBox [Bots]
+    lead[AG Lead]
+    notion["Notion<br/>AG cases"]
+    slackCases["Slack<br/>#platform-security"]
+    context["AG Context<br/>IAM, HR, tags"]
+    changeBot[AG Change]
+    builder[AG Builder]
+    slackBuild["Slack<br/>#platform-security-<br/>build"]
+    yann["Yann<br/>human"]
+  end
+
+  subgraph deployBox [Deploy]
+    pr[GitHub PR]
+    merges[Yann merges]
+    applyWf["terraform-<br/>apply.yml"]
+    terraform["Terraform deploys<br/>the Lambdas"]
+    pr --> merges --> applyWf --> terraform
+  end
+
+  subgraph runBox [Run a fix]
+    closeFn["ag-fix-<br/>close-open-port"]
+    restoreFn["ag-fix-restore-<br/>bucket-public-<br/>access-block"]
+    removeFn["ag-fix-remove-<br/>bucket-public-<br/>access-block"]
+    containFn["ag-fix-<br/>contain-iam-user"]
+  end
+
+  subgraph gatesBox [Guardrails]
+    allowList[allow-list]
+    guardAudit["src/guard audit"]
+    optIn["opt-in tags<br/>auto-remediate=true<br/>purpose<br/>ag-demo-synthetic"]
+    portRule["sensitive port<br/>outside private<br/>range is a finding"]
+    publicTag["public=true<br/>with both<br/>opt-in tags<br/>opens one bucket"]
+    autoRun["auto-remediate when<br/>guards and tags pass<br/>dry run, then apply"]
+    humanAsk["A human is asked<br/>only for intent,<br/>a build, a merge,<br/>or a guard change"]
+    allowList --> guardAudit --> optIn --> autoRun
+  end
+
+  apiDest --> lead
+  lead --> notion
+  lead <--> slackCases
+  slackCases <--> yann
+  yann --- humanAsk
+  lead --> context --> changeBot
+  changeBot -->|"fix exists"| autoRun
+  autoRun -->|"matching fix"| runBox
+  changeBot -->|"no fix"| builder
+  builder --> slackBuild
+  builder --> pr
+  terraform -->|"deploys"| runBox
+  portRule --> closeFn
+  publicTag --> removeFn
 ```
 
-<p class="fine">Tags say it's safe to fix, so it's fixed and closed. Untagged public resources and open ports go back to private. A human is asked only for intent, builds and merges.</p>
+<p class="fine">Same diagram as the README. The EventBridge rules are created by hand. A fix runs when the guards and the opt-in tags pass. The handler dry-runs unless apply is true. A human is asked for intent, a build, a merge, or a guard change.</p>
 
 ---
 

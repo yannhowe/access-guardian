@@ -98,6 +98,20 @@
     }
     .reveal .mermaid { background: transparent; }
     .reveal .mermaid svg { max-width: 100%; max-height: 500px; }
+    .reveal .mermaid.diagram-scroll {
+      box-sizing: border-box;
+      max-width: 1120px;
+      max-height: 560px;
+      padding: 0 12px 8px 0;
+      overflow: auto;
+    }
+    .reveal .mermaid.diagram-scroll svg {
+      display: block;
+      width: 100% !important;
+      height: auto !important;
+      max-width: 100% !important;
+      max-height: none !important;
+    }
     .reveal .mermaid .node rect {
       rx: 12px;
       ry: 12px;
