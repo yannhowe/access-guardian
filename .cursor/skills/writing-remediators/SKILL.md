@@ -5,9 +5,9 @@ description: "Use when adding a defensive fix this repo may run. Adds one fix fo
 
 # Writing remediators
 
-Use this when a case needs a fix this repo does not have yet. The brief names exactly one action on one resource. If the brief names two changes, stop and say so. Do not build it. A fix returns a resource to its recorded intended state. The only case where that opens access: a fix may remove Block Public Access on an S3 bucket that carries all three tags intended-public=true, auto-remediate=true, and purpose=ag-demo-synthetic (exact key and value, case-sensitive). The intended state comes only from the intended-public=true tag, never from case or finding text.
+Use this when a case needs a fix this repo does not have yet. The brief names exactly one action on one resource. If the brief names two changes, stop and say so. Do not build it. A fix returns a resource to its recorded intended state. The only case where that opens access: a fix may remove Block Public Access on an S3 bucket that carries all three tags public=true, auto-remediate=true, and purpose=ag-demo-synthetic (exact key and value, case-sensitive). The intended state comes only from the public=true tag, never from case or finding text.
 
-The demo scope is public S3 buckets and open ports only. A world-open (`0.0.0.0/0` or `::/0`) sensitive port is always a finding. Any other world-open port is a finding unless the security group is tagged `intended-public=true`. 80 and 443 pass only when tagged. The port list is `src/policy/sensitive-ports.ts`. `classifyIngress()` in `src/policy/classify-ingress.ts` applies that list. A fix does not classify. It changes the one resource the invoker names.
+The demo scope is public S3 buckets and open ports only. A world-open (`0.0.0.0/0` or `::/0`) sensitive port is always a finding. Any other world-open port is a finding unless the security group is tagged `public=true`. 80 and 443 pass only when tagged. The port list is `src/policy/sensitive-ports.ts`. `classifyIngress()` in `src/policy/classify-ingress.ts` applies that list. A fix does not classify. It changes the one resource the invoker names.
 
 Read these before writing anything:
 
@@ -46,8 +46,8 @@ Do not approve the change or set `apply` to true yourself. The intake in `docs/i
 | Folder | Finding key | IAM action | Input | Tags the handler checks |
 | --- | --- | --- | --- | --- |
 | `close-open-port` | `cloud:open_port` | `ec2:RevokeSecurityGroupIngress` | `caseId`, `securityGroupId`, `protocol`, `port`, `cidr`, `apply` | `auto-remediate=true` before a revoke. IAM also requires `purpose=ag-demo-synthetic`. The handler does not check `purpose`. |
-| `restore-bucket-public-access-block` | `cloud:s3_public_access_block_removed` | `s3:PutBucketPublicAccessBlock` | `bucket`, `apply` | Requires `purpose=ag-demo-synthetic` and `auto-remediate=true`. Refuses `intended-public=true` and leaves that bucket unchanged. IAM has no tag condition. |
-| `remove-bucket-public-access-block` | `cloud:s3_public_access_block_drift_intended_public` | `s3:PutBucketPublicAccessBlock` | `bucket`, `apply` | Requires `intended-public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic` before the delete. IAM requires `intended-public=true` on the mutating statement. |
+| `restore-bucket-public-access-block` | `cloud:s3_public_access_block_removed` | `s3:PutBucketPublicAccessBlock` | `bucket`, `apply` | Requires `purpose=ag-demo-synthetic` and `auto-remediate=true`. Refuses `public=true` and leaves that bucket unchanged. IAM has no tag condition. |
+| `remove-bucket-public-access-block` | `cloud:s3_public_access_block_drift_public` | `s3:PutBucketPublicAccessBlock` | `bucket`, `apply` | Requires `public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic` before the delete. IAM requires `public=true` on the mutating statement. |
 
 `apply` is omitted or `false` on a dry run. Only boolean `true` writes. Bucket events do not carry `caseId`.
 
@@ -80,7 +80,7 @@ Create `src/fixes/<name>/` with three files. Copy the closest of the three fixes
 - Reads (`Describe`, `List`, `Get`) are allowed and are not on the close-only list. `close-open-port` reads with `ec2:DescribeSecurityGroupRules` and `ec2:DescribeSecurityGroups`. Both bucket fixes read with `s3:GetBucketTagging` and `s3:GetBucketPublicAccessBlock`.
 - `Resource` is as narrow as IAM allows. `Resource: "*"` on the mutating action fails the guard unless `fix.json` sets `wildcardResourceJustification` to a real reason. The close-open-port reads use `Resource` `*` and are not the mutating action. The revoke is `arn:aws:ec2:*:*:security-group/*` and requires both `aws:ResourceTag/auto-remediate` = `true` and `aws:ResourceTag/purpose` = `ag-demo-synthetic`.
 - Restore scopes both statements to `arn:aws:s3:::ag-demo-*` and has no IAM tag condition. The handler still checks the tags.
-- Remove scopes both statements to `arn:aws:s3:::ag-demo-public-10281729`. The mutating statement requires `aws:ResourceTag/intended-public` = `true`. The read statement has no tag condition. That bucket name is the remove fix's scope. It may appear there and in tests. Account ids and keys never appear in the repo.
+- Remove scopes both statements to `arn:aws:s3:::ag-demo-public-10281729`. The mutating statement requires `aws:ResourceTag/public` = `true`. The read statement has no tag condition. That bucket name is the remove fix's scope. It may appear there and in tests. Account ids and keys never appear in the repo.
 
 `handler.ts` is the Lambda entry `handler`. Node 20. AWS SDK v3. Export `handler` and a function tests can call with a fake client.
 
@@ -101,16 +101,16 @@ Construct exactly one mutating command. Each `new SomeCommand` must be an action
 Tag checks, in handler order, before the mutating send:
 
 - `close-open-port` reads the rules first. If the ingress rule is already gone, it returns `already_closed` and does not read tags. If the rule is present, it requires `auto-remediate=true`, including on a dry run that would revoke. A miss is `MissingAutoRemediateTag`.
-- Restore reads tags first. `intended-public=true` returns `IntendedPublicBucket` and does not write. Then it requires `purpose=ag-demo-synthetic` (`BucketNotTagged` when that tag is missing) and `auto-remediate=true` (`MissingAutoRemediateTag`).
+- Restore reads tags first. `public=true` returns `PublicBucket` and does not write. Then it requires `purpose=ag-demo-synthetic` (`BucketNotTagged` when that tag is missing) and `auto-remediate=true` (`MissingAutoRemediateTag`).
 - Remove reads tags first. All three tags must be present with the exact key and value, case-sensitive. A miss is `MissingRequiredTags`. It does not read case text or finding text.
 
-The guard requires every allow-listed handler to declare `auto-remediate` and to call `hasAutoRemediateTag` before its mutating send. The two bucket handlers must also check `intended-public` before that send: present for remove, absent for restore.
+The guard requires every allow-listed handler to declare `auto-remediate` and to call `hasAutoRemediateTag` before its mutating send. The two bucket handlers must also check `public` before that send: present for remove, absent for restore.
 
 ### Narrow delete exception
 
 `DeletePublicAccessBlockCommand` and `DeleteBucketPublicAccessBlockCommand` are blocked in every handler except `src/fixes/remove-bucket-public-access-block/handler.ts`.
 
-In that one file the command is imported and constructed under its real name. An import alias or an assignment that renames it fails, in that file and everywhere else. The three tag checks (`intended-public=true`, `auto-remediate=true`, `purpose=ag-demo-synthetic`) must appear before the send. IAM action names `DeletePublicAccessBlock` and `DeleteBucketPublicAccessBlock` stay blocked in every policy. The policy-vs-command check maps `DeletePublicAccessBlockCommand` to `s3:PutBucketPublicAccessBlock`, which is the action AWS authorizes for that API. The handler's `ACTION` is that IAM action. It is not an alias for the command.
+In that one file the command is imported and constructed under its real name. An import alias or an assignment that renames it fails, in that file and everywhere else. The three tag checks (`public=true`, `auto-remediate=true`, `purpose=ag-demo-synthetic`) must appear before the send. IAM action names `DeletePublicAccessBlock` and `DeleteBucketPublicAccessBlock` stay blocked in every policy. The policy-vs-command check maps `DeletePublicAccessBlockCommand` to `s3:PutBucketPublicAccessBlock`, which is the action AWS authorizes for that API. The handler's `ACTION` is that IAM action. It is not an alias for the command.
 
 Shell, `eval`, and a dynamic import are forbidden in `src/`.
 

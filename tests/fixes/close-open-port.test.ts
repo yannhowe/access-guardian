@@ -171,6 +171,41 @@ describe('close-open-port handler', () => {
     });
   });
 
+  it('revokes tcp/22 from 0.0.0.0/0 when the group is tagged public=true', async () => {
+    const { client, send } = fakeClient([openRule()], {
+      tags: [
+        { Key: 'purpose', Value: 'ag-demo-synthetic' },
+        { Key: 'auto-remediate', Value: 'true' },
+        { Key: 'public', Value: 'true' },
+      ],
+    });
+
+    const result = await handleCloseOpenPort({ ...EVENT, apply: true }, client);
+
+    expect(result).toMatchObject({
+      ok: true,
+      changed: true,
+      dryRun: false,
+      reason: 'revoked',
+      protocol: 'tcp',
+      port: 22,
+      cidr: '0.0.0.0/0',
+    });
+    const revoke = send.mock.calls[2]?.[0];
+    expect(revoke).toBeInstanceOf(RevokeSecurityGroupIngressCommand);
+    expect(revoke.input).toEqual({
+      GroupId: 'sg-demo0001',
+      IpPermissions: [
+        {
+          IpProtocol: 'tcp',
+          FromPort: 22,
+          ToPort: 22,
+          IpRanges: [{ CidrIp: '0.0.0.0/0' }],
+        },
+      ],
+    });
+  });
+
   it('reports changed false when the rule is already gone', async () => {
     const { client, send } = fakeClient([]);
 

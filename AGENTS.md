@@ -4,9 +4,9 @@ Repo code changes go through Cursor cloud agent pull requests. Paste the full ou
 
 Write plain English. Do not use em dashes in docs or code comments.
 
-Synthetic data only. Defensive remediation only. A fix returns a resource to its recorded intended state. The only case where that opens access: a fix may remove Block Public Access on an S3 bucket that carries all three tags intended-public=true, auto-remediate=true, and purpose=ag-demo-synthetic (exact key and value, case-sensitive). The intended state comes only from the intended-public=true tag, never from case or finding text. It does not include exploit payloads or attack steps.
+Synthetic data only. Defensive remediation only. A fix returns a resource to its recorded intended state. The only case where that opens access: a fix may remove Block Public Access on an S3 bucket that carries all three tags public=true, auto-remediate=true, and purpose=ag-demo-synthetic (exact key and value, case-sensitive). The intended state comes only from the public=true tag, never from case or finding text. It does not include exploit payloads or attack steps.
 
-A world-open (`0.0.0.0/0` or `::/0`) sensitive port is always a finding. Any other world-open port is a finding unless the security group is tagged `intended-public=true`. 80 and 443 pass only when tagged. The port list is `src/policy/sensitive-ports.ts`. `classifyIngress()` in `src/policy/classify-ingress.ts` applies it.
+A world-open (`0.0.0.0/0` or `::/0`) sensitive port is always a finding. Any other world-open port is a finding unless the security group is tagged `public=true`. 80 and 443 pass only when tagged. The port list is `src/policy/sensitive-ports.ts`. `classifyIngress()` in `src/policy/classify-ingress.ts` applies it.
 
 Keep secrets out of code, logs, tests, fixtures, and pull requests. Do not print them. The xAI key is the environment variable `XAI_API_KEY`. Tests mock the network and must pass with no key set.
 

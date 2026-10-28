@@ -48,7 +48,7 @@ flowchart TD
     guardAudit["src/guard audit"]
     tagAuto["auto-remediate true"]
     tagPurpose["purpose ag-demo-synthetic"]
-    tagPublic["intended-public true"]
+    tagPublic["public true"]
     guardLabel["guard-change label"]
   end
 
@@ -128,7 +128,7 @@ Each fix Lambda has its own role, `ag-fix-<name>`. The IAM tag conditions are in
 | --- | --- | --- | --- |
 | `close-open-port`, function `ag-fix-close-open-port` | `cloud:open_port` | `ec2:RevokeSecurityGroupIngress` | Revokes one ingress rule on one security group. Protocol is `tcp` or `udp`, one port, one IPv4 CIDR. |
 | `restore-bucket-public-access-block`, function `ag-fix-restore-bucket-public-access-block` | `cloud:s3_public_access_block_removed` | `s3:PutBucketPublicAccessBlock` | Turns on all four Block Public Access flags for one bucket whose name starts with `ag-demo-`. |
-| `remove-bucket-public-access-block`, function `ag-fix-remove-bucket-public-access-block` | `cloud:s3_public_access_block_drift_intended_public` | `s3:PutBucketPublicAccessBlock` | Removes Block Public Access on bucket `ag-demo-public-10281729` only. The SDK call is `DeletePublicAccessBlockCommand`. AWS authorizes that API with `s3:PutBucketPublicAccessBlock`. |
+| `remove-bucket-public-access-block`, function `ag-fix-remove-bucket-public-access-block` | `cloud:s3_public_access_block_drift_public` | `s3:PutBucketPublicAccessBlock` | Removes Block Public Access on bucket `ag-demo-public-10281729` only. The SDK call is `DeletePublicAccessBlockCommand`. AWS authorizes that API with `s3:PutBucketPublicAccessBlock`. |
 
 Success reasons:
 
@@ -145,12 +145,12 @@ A fix calls Grok only when `fix.json` says `callsGrok` is true. All three say `f
 Taken from each `policy.json` and handler.
 
 - **`ag-fix-close-open-port`.** The revoke statement allows `ec2:RevokeSecurityGroupIngress` on `arn:aws:ec2:*:*:security-group/*` only when both `aws:ResourceTag/auto-remediate` is `true` and `aws:ResourceTag/purpose` is `ag-demo-synthetic`. The two read actions have no tag condition and use `Resource` `*`. The handler checks `auto-remediate=true` before a revoke, including a dry run that would revoke. The handler does not check `purpose`.
-- **`ag-fix-restore-bucket-public-access-block`.** Both statements use `arn:aws:s3:::ag-demo-*`. Neither statement has a tag condition. The handler requires `purpose=ag-demo-synthetic` and `auto-remediate=true`. It refuses a bucket that has `intended-public=true` and leaves that bucket unchanged.
-- **`ag-fix-remove-bucket-public-access-block`.** Both statements use `arn:aws:s3:::ag-demo-public-10281729`. The mutating statement requires `aws:ResourceTag/intended-public` to be `true`. The read statement has no tag condition. The handler requires `intended-public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic` before the delete. It does not read case text. The intended state comes from `intended-public=true`.
+- **`ag-fix-restore-bucket-public-access-block`.** Both statements use `arn:aws:s3:::ag-demo-*`. Neither statement has a tag condition. The handler requires `purpose=ag-demo-synthetic` and `auto-remediate=true`. It refuses a bucket that has `public=true` and leaves that bucket unchanged.
+- **`ag-fix-remove-bucket-public-access-block`.** Both statements use `arn:aws:s3:::ag-demo-public-10281729`. The mutating statement requires `aws:ResourceTag/public` to be `true`. The read statement has no tag condition. The handler requires `public=true`, `auto-remediate=true`, and `purpose=ag-demo-synthetic` before the delete. It does not read case text. The intended state comes from `public=true`.
 
-`src/guard/audit.ts` requires every allow-listed handler to declare `auto-remediate` and to call `hasAutoRemediateTag` before its mutating send. The two bucket handlers must also check `intended-public` before that send: present for the remove fix, absent for the restore fix.
+`src/guard/audit.ts` requires every allow-listed handler to declare `auto-remediate` and to call `hasAutoRemediateTag` before its mutating send. The two bucket handlers must also check `public` before that send: present for the remove fix, absent for the restore fix.
 
-`src/policy/classify-ingress.ts` classifies one ingress rule as `ok` or `finding`. It makes no AWS call and no Grok call. A rule is world-open when any CIDR is `0.0.0.0/0` or `::/0`. A rule that is not world-open is ok. A world-open rule on a sensitive port is always a finding, even when the security group is tagged. Protocol `-1`, a port range that overlaps a sensitive port, and a missing or unparseable port count as sensitive. Missing or unparseable ports fail closed. Any other world-open port, including 80 and 443, is a finding unless the security group tag `intended-public=true` is set. The key and the value are exact and case-sensitive. That is the same tag the S3 fixes use. The port list, with ranges expanded, is `src/policy/sensitive-ports.ts`.
+`src/policy/classify-ingress.ts` classifies one ingress rule as `ok` or `finding`. It makes no AWS call and no Grok call. A rule is world-open when any CIDR is `0.0.0.0/0` or `::/0`. A rule that is not world-open is ok. A world-open rule on a sensitive port is always a finding, even when the security group is tagged. Protocol `-1`, a port range that overlaps a sensitive port, and a missing or unparseable port count as sensitive. Missing or unparseable ports fail closed. Any other world-open port, including 80 and 443, is a finding unless the security group tag `public=true` is set. The key and the value are exact and case-sensitive. That is the same tag the S3 fixes use. The port list, with ranges expanded, is `src/policy/sensitive-ports.ts`.
 
 ## Guardrails
 

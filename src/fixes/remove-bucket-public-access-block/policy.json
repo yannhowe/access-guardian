@@ -14,7 +14,7 @@
       "Resource": "arn:aws:s3:::ag-demo-public-10281729",
       "Condition": {
         "StringEquals": {
-          "aws:ResourceTag/intended-public": "true"
+          "aws:ResourceTag/public": "true"
         }
       }
     }

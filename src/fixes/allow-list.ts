@@ -6,9 +6,9 @@
  *
  * A fix returns a resource to its recorded intended state. The only case
  * where that opens access: a fix may remove Block Public Access on an S3
- * bucket that carries all three tags intended-public=true,
+ * bucket that carries all three tags public=true,
  * auto-remediate=true, and purpose=ag-demo-synthetic (exact key and value,
- * case-sensitive). The intended state comes only from the intended-public=true
+ * case-sensitive). The intended state comes only from the public=true
  * tag, never from case or finding text.
  *
  * Does not belong: deleting resources, rotating credentials, stopping
@@ -31,9 +31,9 @@ export const ALLOWED_FIXES = {
     undo: 'There is no undo',
   },
   'remove-bucket-public-access-block': {
-    findingKey: 'cloud:s3_public_access_block_drift_intended_public',
+    findingKey: 'cloud:s3_public_access_block_drift_public',
     action: 's3:PutBucketPublicAccessBlock',
-    summary: 'Remove Block Public Access on the one bucket tagged intended-public=true',
+    summary: 'Remove Block Public Access on the one bucket tagged public=true',
     undo: 'There is no undo',
   },
 } as const satisfies Record<

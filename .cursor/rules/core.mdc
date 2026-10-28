@@ -7,7 +7,7 @@ alwaysApply: true
 
 Write plain English. Do not use em dashes.
 
-Do not commit secrets, account ids, or URLs. Synthetic data only. A fix returns a resource to its recorded intended state. The only case where that opens access: a fix may remove Block Public Access on an S3 bucket that carries all three tags intended-public=true, auto-remediate=true, and purpose=ag-demo-synthetic (exact key and value, case-sensitive). The intended state comes only from the intended-public=true tag, never from case or finding text.
+Do not commit secrets, account ids, or URLs. Synthetic data only. A fix returns a resource to its recorded intended state. The only case where that opens access: a fix may remove Block Public Access on an S3 bucket that carries all three tags public=true, auto-remediate=true, and purpose=ag-demo-synthetic (exact key and value, case-sensitive). The intended state comes only from the public=true tag, never from case or finding text.
 
 The demo scope is public S3 buckets and open ports only.
 
