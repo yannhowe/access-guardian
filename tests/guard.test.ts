@@ -464,6 +464,165 @@ describe('guard', () => {
     );
   });
 
+  const REMOVE_DELETE_POLICY = policy([
+    { action: 's3:GetBucketTagging', resource: 'arn:aws:s3:::ag-demo-public-10281729' },
+    { action: 's3:GetBucketPublicAccessBlock', resource: 'arn:aws:s3:::ag-demo-public-10281729' },
+    { action: 's3:PutBucketPublicAccessBlock', resource: 'arn:aws:s3:::ag-demo-public-10281729' },
+  ]);
+
+  function removeMetadata(name: string): string {
+    return JSON.stringify({
+      name,
+      findingKey:
+        name === 'remove-bucket-public-access-block'
+          ? 'cloud:s3_public_access_block_drift_intended_public'
+          : 'cloud:s3_public_access_block_removed',
+      action: 's3:PutBucketPublicAccessBlock',
+      description: 'Remove Block Public Access on the one intended-public demo bucket',
+      callsGrok: false,
+    });
+  }
+
+  function removeDeleteHandler(command = 'new DeletePublicAccessBlockCommand({})', omitted?: string): string {
+    const checks = [
+      ['intended', 'if (!hasIntendedPublicTag(tags)) { return { ok: false }; }'],
+      ['auto', 'if (!hasAutoRemediateTag(tags)) { return { ok: false }; }'],
+      ['purpose', 'if (!hasDemoPurpose(tags)) { return { ok: false }; }'],
+    ] as const;
+    return [
+      "const AUTO_REMEDIATE_TAG_KEY = 'auto-remediate';",
+      "const AUTO_REMEDIATE_TAG_VALUE = 'true';",
+      "const INTENDED_PUBLIC_TAG_KEY = 'intended-public';",
+      "const INTENDED_PUBLIC_TAG_VALUE = 'true';",
+      "const PURPOSE_TAG_KEY = 'purpose';",
+      "const PURPOSE_TAG_VALUE = 'ag-demo-synthetic';",
+      'function hasAutoRemediateTag(tags: { Key?: string; Value?: string }[]) { return false; }',
+      'function hasIntendedPublicTag(tags: { Key?: string; Value?: string }[]) { return false; }',
+      'function hasDemoPurpose(tags: { Key?: string; Value?: string }[]) { return false; }',
+      'new GetBucketTaggingCommand({})',
+      'new GetBucketPublicAccessBlockCommand({})',
+      ...checks.filter(([name]) => name !== omitted).map(([, line]) => line),
+      command,
+    ].join('\n');
+  }
+
+  function deleteMessages(handlerText: string, name: string): string[] {
+    const failures = audit({
+      ...repoInput(),
+      terraform: undefined,
+      fixes: [
+        folder({
+          name,
+          handlerText,
+          policyText: REMOVE_DELETE_POLICY,
+          metadataText: removeMetadata(name),
+        }),
+      ],
+    });
+    return failures
+      .map((failure) => failure.message)
+      .filter(
+        (message) =>
+          message.includes('DeletePublicAccessBlock') ||
+          message.includes('DeleteBucketPublicAccessBlock') ||
+          message.includes('aliases'),
+      );
+  }
+
+  it('passes when the remove fix calls DeletePublicAccessBlockCommand after the three tag checks', () => {
+    expect(deleteMessages(removeDeleteHandler(), 'remove-bucket-public-access-block')).toEqual([]);
+    expect(
+      deleteMessages(
+        removeDeleteHandler('new DeleteBucketPublicAccessBlockCommand({})'),
+        'remove-bucket-public-access-block',
+      ),
+    ).toEqual([]);
+  });
+
+  it('maps DeletePublicAccessBlockCommand to s3:PutBucketPublicAccessBlock', () => {
+    const covered = audit({
+      ...repoInput(),
+      terraform: undefined,
+      fixes: [
+        folder({
+          name: 'remove-bucket-public-access-block',
+          handlerText: removeDeleteHandler(),
+          policyText: REMOVE_DELETE_POLICY,
+          metadataText: removeMetadata('remove-bucket-public-access-block'),
+        }),
+      ],
+    });
+    const coveredMessages = covered.map((failure) => failure.message);
+    expect(coveredMessages.some((message) => message.includes('does not list'))).toBe(false);
+    expect(coveredMessages.some((message) => message.includes('does not call'))).toBe(false);
+
+    const readsOnly = policy([
+      { action: 's3:GetBucketTagging', resource: 'arn:aws:s3:::ag-demo-public-10281729' },
+      { action: 's3:GetBucketPublicAccessBlock', resource: 'arn:aws:s3:::ag-demo-public-10281729' },
+    ]);
+    const uncovered = audit({
+      ...repoInput(),
+      terraform: undefined,
+      fixes: [
+        folder({
+          name: 'remove-bucket-public-access-block',
+          handlerText: removeDeleteHandler(),
+          policyText: readsOnly,
+          metadataText: removeMetadata('remove-bucket-public-access-block'),
+        }),
+      ],
+    });
+    expect(uncovered.map((failure) => failure.message)).toContain(
+      'handler calls DeletePublicAccessBlock which policy.json does not list',
+    );
+  });
+
+  it.each(['close-open-port', 'restore-bucket-public-access-block'])(
+    'fails when %s calls DeletePublicAccessBlockCommand',
+    (name) => {
+      const messages = deleteMessages(removeDeleteHandler(), name);
+      expect(messages).toContain(
+        'DeletePublicAccessBlockCommand is only allowed in src/fixes/remove-bucket-public-access-block/handler.ts',
+      );
+    },
+  );
+
+  it.each([
+    ['intended-public=true', 'intended'],
+    ['auto-remediate=true', 'auto'],
+    ['purpose=ag-demo-synthetic', 'purpose'],
+  ] as const)('fails when the remove fix is missing the %s check', (label, omitted) => {
+    expect(deleteMessages(removeDeleteHandler('new DeletePublicAccessBlockCommand({})', omitted), 'remove-bucket-public-access-block')).toContain(
+      `DeletePublicAccessBlockCommand is missing the ${label} check before the send`,
+    );
+  });
+
+  it.each([
+    ['intended-public=true', 'if (!hasIntendedPublicTag(tags)) { return { ok: false }; }'],
+    ['auto-remediate=true', 'if (!hasAutoRemediateTag(tags)) { return { ok: false }; }'],
+    ['purpose=ag-demo-synthetic', 'if (!hasDemoPurpose(tags)) { return { ok: false }; }'],
+  ] as const)('fails when the remove fix checks %s after the send', (label, check) => {
+    const omitted = label.startsWith('intended') ? 'intended' : label.startsWith('auto') ? 'auto' : 'purpose';
+    const handlerText = [removeDeleteHandler('new DeletePublicAccessBlockCommand({})', omitted), check].join('\n');
+    const messages = deleteMessages(handlerText, 'remove-bucket-public-access-block');
+    expect(messages).toContain(`DeletePublicAccessBlockCommand checks ${label} after the send`);
+    expect(messages).not.toContain(`DeletePublicAccessBlockCommand is missing the ${label} check before the send`);
+  });
+
+  it('fails when a delete command is imported under another name', () => {
+    const handlerText = [
+      "import { DeletePublicAccessBlockCommand as PutBucketPublicAccessBlockCommand } from '@aws-sdk/client-s3';",
+      removeDeleteHandler('new PutBucketPublicAccessBlockCommand({})'),
+    ].join('\n');
+
+    expect(deleteMessages(handlerText, 'remove-bucket-public-access-block')).toContain(
+      'handler aliases DeletePublicAccessBlockCommand as PutBucketPublicAccessBlockCommand',
+    );
+    expect(deleteMessages(handlerText, 'close-open-port')).toContain(
+      'handler aliases DeletePublicAccessBlockCommand as PutBucketPublicAccessBlockCommand',
+    );
+  });
+
   it('fails when an xAI call sits outside the Grok client', () => {
     const endpoint = markers()[0] ?? '';
     const failures = audit({

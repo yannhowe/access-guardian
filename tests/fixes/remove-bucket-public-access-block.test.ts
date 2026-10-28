@@ -485,29 +485,33 @@ describe('remove-bucket-public-access-block handler', () => {
     expect(deletes(badBlock.send)).toEqual([]);
   });
 
-  it('constructs only the aliased delete and the two reads', () => {
+  it('constructs DeletePublicAccessBlockCommand under its real name', () => {
     const source = readFileSync(HANDLER_PATH, 'utf8');
     const importBlock = source.slice(source.indexOf('import {'), source.indexOf("} from '@aws-sdk/client-s3'"));
 
-    expect(importBlock).toContain('DeletePublicAccessBlockCommand as PutBucketPublicAccessBlockCommand');
+    expect(importBlock).toContain('DeletePublicAccessBlockCommand');
+    expect(importBlock).not.toMatch(/DeletePublicAccessBlockCommand\s+as\s+/);
     expect(importBlock).toContain('GetPublicAccessBlockCommand as GetBucketPublicAccessBlockCommand');
     expect(importBlock).toContain('GetBucketTaggingCommand');
     expect(importBlock).not.toContain('PutPublicAccessBlockCommand');
     expect(importBlock).not.toContain('s3control');
+    expect(source).toContain("const ACTION = 's3:PutBucketPublicAccessBlock'");
     expect(source).toContain("const AUTO_REMEDIATE_TAG_KEY = 'auto-remediate'");
     expect(source).toContain("const AUTO_REMEDIATE_TAG_VALUE = 'true'");
     expect(source).toContain("const INTENDED_PUBLIC_TAG_KEY = 'intended-public'");
     expect(source).toContain("const INTENDED_PUBLIC_TAG_VALUE = 'true'");
+    expect(source).toContain("const PURPOSE_TAG_KEY = 'purpose'");
+    expect(source).toContain("const PURPOSE_TAG_VALUE = 'ag-demo-synthetic'");
     const intendedAt = source.indexOf('if (!hasIntendedPublicTag(');
     const autoAt = source.indexOf('if (!hasAutoRemediateTag(');
-    const putAt = source.indexOf('new PutBucketPublicAccessBlockCommand');
+    const purposeAt = source.indexOf('if (!hasDemoPurpose(');
+    const deleteAt = source.indexOf('new DeletePublicAccessBlockCommand');
     expect(intendedAt).toBeGreaterThan(-1);
     expect(autoAt).toBeGreaterThan(intendedAt);
-    expect(putAt).toBeGreaterThan(autoAt);
-    expect(source.match(/new PutBucketPublicAccessBlockCommand\b/g)).toEqual([
-      'new PutBucketPublicAccessBlockCommand',
-    ]);
-    expect(source).not.toMatch(/new DeletePublicAccessBlockCommand\b/);
+    expect(purposeAt).toBeGreaterThan(autoAt);
+    expect(deleteAt).toBeGreaterThan(purposeAt);
+    expect(source.match(/new DeletePublicAccessBlockCommand\b/g)).toEqual(['new DeletePublicAccessBlockCommand']);
+    expect(source).not.toMatch(/new PutBucketPublicAccessBlockCommand\b/);
     expect(source).not.toMatch(/new PutPublicAccessBlockCommand\b/);
     expect(source).not.toMatch(/PutBucketPolicy|PutBucketAcl|PutObject|DeleteObject|GetObject/);
     expect(source).not.toMatch(/PutAccountPublicAccessBlock|DeleteAccountPublicAccessBlock|s3control/);
