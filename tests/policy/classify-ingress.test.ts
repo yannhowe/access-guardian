@@ -10,7 +10,7 @@ import {
 } from '../../src/policy/classify-ingress.js';
 import { SENSITIVE_PORTS } from '../../src/policy/sensitive-ports.js';
 
-const PUBLIC_TAG: readonly SecurityGroupTag[] = [{ key: 'intended-public', value: 'true' }];
+const PUBLIC_TAG: readonly SecurityGroupTag[] = [{ key: 'public', value: 'true' }];
 
 const OTHER_TAGS: readonly SecurityGroupTag[] = [
   { key: 'purpose', value: 'ag-demo-synthetic' },
@@ -42,6 +42,13 @@ describe('sensitive ports', () => {
 });
 
 describe('classifyIngress', () => {
+  it('public=true never excuses a sensitive port', () => {
+    const tags: readonly SecurityGroupTag[] = [{ key: 'public', value: 'true' }];
+    expect(classifyIngress(rule({ fromPort: 22, toPort: 22 }), tags)).toBe('finding');
+    expect(classifyIngress(rule({ fromPort: 3389, toPort: 3389 }), tags)).toBe('finding');
+    expect(classifyIngress(rule({ fromPort: 443, toPort: 443 }), tags)).toBe('ok');
+  });
+
   it('22 tagged gives finding', () => {
     const verdict = classifyIngress(rule({ fromPort: 22, toPort: 22 }), [...OTHER_TAGS, ...PUBLIC_TAG]);
     expect(verdict).toBe('finding');
@@ -150,9 +157,11 @@ describe('classifyIngress', () => {
   });
 
   it.each([
+    ['intended-public', 'true'],
     ['Intended-public', 'true'],
-    ['intended-public', 'True'],
-    ['intended-public', 'TRUE'],
+    ['public', 'True'],
+    ['public', 'TRUE'],
+    ['PUBLIC', 'true'],
     ['INTENDED-PUBLIC', 'true'],
   ])('tag %s=%s on 443 gives finding', (key, value) => {
     expect(classifyIngress(rule({ fromPort: 443, toPort: 443 }), [{ key, value }])).toBe('finding');

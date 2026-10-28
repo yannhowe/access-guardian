@@ -171,6 +171,41 @@ describe('close-open-port handler', () => {
     });
   });
 
+  it('revokes tcp/22 from 0.0.0.0/0 when the group is tagged public=true', async () => {
+    const { client, send } = fakeClient([openRule()], {
+      tags: [
+        { Key: 'purpose', Value: 'ag-demo-synthetic' },
+        { Key: 'auto-remediate', Value: 'true' },
+        { Key: 'public', Value: 'true' },
+      ],
+    });
+
+    const result = await handleCloseOpenPort({ ...EVENT, apply: true }, client);
+
+    expect(result).toMatchObject({
+      ok: true,
+      changed: true,
+      dryRun: false,
+      reason: 'revoked',
+      protocol: 'tcp',
+      port: 22,
+      cidr: '0.0.0.0/0',
+    });
+    const revoke = send.mock.calls[2]?.[0];
+    expect(revoke).toBeInstanceOf(RevokeSecurityGroupIngressCommand);
+    expect(revoke.input).toEqual({
+      GroupId: 'sg-demo0001',
+      IpPermissions: [
+        {
+          IpProtocol: 'tcp',
+          FromPort: 22,
+          ToPort: 22,
+          IpRanges: [{ CidrIp: '0.0.0.0/0' }],
+        },
+      ],
+    });
+  });
+
   it('reports changed false when the rule is already gone', async () => {
     const { client, send } = fakeClient([]);
 
@@ -184,25 +219,72 @@ describe('close-open-port handler', () => {
 
   it('uses the given protocol, port, and CIDR', async () => {
     const { client, send } = fakeClient([
-      openRule({ IpProtocol: 'udp', FromPort: 53, ToPort: 53, CidrIpv4: '10.0.0.0/8' }),
+      openRule({ IpProtocol: 'udp', FromPort: 53, ToPort: 53, CidrIpv4: '0.0.0.0/0' }),
     ]);
     const event = {
       ...EVENT,
       protocol: 'udp',
       port: 53,
-      cidr: '10.0.0.0/8',
+      cidr: '0.0.0.0/0',
       apply: true,
     };
 
     const result = await handleCloseOpenPort(event, client);
 
-    expect(result).toMatchObject({ ok: true, changed: true, protocol: 'udp', port: 53, cidr: '10.0.0.0/8' });
+    expect(result).toMatchObject({ ok: true, changed: true, protocol: 'udp', port: 53, cidr: '0.0.0.0/0' });
     const revoke = send.mock.calls[2]?.[0];
     expect(revoke.input.IpPermissions[0]).toMatchObject({
       IpProtocol: 'udp',
       FromPort: 53,
       ToPort: 53,
-      IpRanges: [{ CidrIp: '10.0.0.0/8' }],
+      IpRanges: [{ CidrIp: '0.0.0.0/0' }],
+    });
+  });
+
+  it('refuses tcp/443 from 0.0.0.0/0 on a public=true group and does not revoke', async () => {
+    const tags = [
+      { Key: 'purpose', Value: 'ag-demo-synthetic' },
+      { Key: 'auto-remediate', Value: 'true' },
+      { Key: 'public', Value: 'true' },
+    ];
+    for (const apply of [undefined, false, true] as const) {
+      const { client, send } = fakeClient([openRule({ FromPort: 443, ToPort: 443 })], { tags });
+      const event = apply === undefined ? { ...EVENT, port: 443 } : { ...EVENT, port: 443, apply };
+      const result = await handleCloseOpenPort(event, client);
+      expect(result, `apply=${String(apply)}`).toEqual({
+        ok: false,
+        changed: false,
+        status: 'refused',
+        reason: 'rule is not a finding under the port rule',
+        action: ACTION,
+        caseId: 'case-demo-1',
+        securityGroupId: 'sg-demo0001',
+        protocol: 'tcp',
+        port: 443,
+        cidr: '0.0.0.0/0',
+      });
+      expect(revoked(send), `apply=${String(apply)}`).toEqual([]);
+    }
+  });
+
+  it('revokes tcp/443 from 0.0.0.0/0 when the group is not tagged public=true', async () => {
+    const { client, send } = fakeClient([openRule({ FromPort: 443, ToPort: 443 })], {
+      tags: [
+        { Key: 'purpose', Value: 'ag-demo-synthetic' },
+        { Key: 'auto-remediate', Value: 'true' },
+      ],
+    });
+
+    const result = await handleCloseOpenPort({ ...EVENT, port: 443, apply: true }, client);
+
+    expect(result).toMatchObject({ ok: true, changed: true, dryRun: false, reason: 'revoked', port: 443 });
+    const revoke = send.mock.calls[2]?.[0];
+    expect(revoke).toBeInstanceOf(RevokeSecurityGroupIngressCommand);
+    expect(revoke.input.IpPermissions[0]).toMatchObject({
+      IpProtocol: 'tcp',
+      FromPort: 443,
+      ToPort: 443,
+      IpRanges: [{ CidrIp: '0.0.0.0/0' }],
     });
   });
 

@@ -1,11 +1,11 @@
 ---
 description: Paths an agent must not edit
-globs: src/guard/**,tests/guard*,infra/modules/**,.github/**,.cursor/**
+globs: src/guard/**,tests/guard*,infra/modules/**,.github/**,.cursor/**,src/fixes/allow-list.ts
 alwaysApply: false
 ---
 
 # Protected paths
 
-Do not edit these paths. That includes the guard, its tests, the Terraform module, workflows, and these rules.
+Do not edit these paths. That includes the guard, its tests, the allow-list at `src/fixes/allow-list.ts`, the Terraform module, workflows, and these rules.
 
 If the task seems to need a change here, stop. Say that in the pull request description. Do not add the `guard-change` label.

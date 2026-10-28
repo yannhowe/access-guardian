@@ -2,6 +2,7 @@
  * Tests for src/grok/client.ts.
  * fetch is replaced with a fake. These tests do not contact api.x.ai.
  */
+import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { extract, type JsonSchema } from '../../src/grok/client.js';
 
@@ -231,6 +232,81 @@ describe('extract', () => {
     const result = await extract(request());
 
     expect(result).toEqual({ ok: false, reason: 'no_key' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expectNothingLogged();
+  });
+
+  it('loads the key from Secrets Manager and leaves the environment unchanged', async () => {
+    vi.stubEnv('XAI_API_KEY', 'env-key');
+    const envBefore = process.env.XAI_API_KEY;
+    vi.spyOn(SecretsManagerClient.prototype, 'send').mockImplementation(async (command: unknown) => {
+      expect(command).toBeInstanceOf(GetSecretValueCommand);
+      if (!(command instanceof GetSecretValueCommand)) {
+        throw new Error('unexpected command');
+      }
+      expect(command.input.SecretId).toBe('platsec-xai-api-key');
+      return { SecretString: 'secret-model-key' };
+    });
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => completion(JSON.stringify({ port: 22 })));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await extract({ ...request(), secretId: 'platsec-xai-api-key' });
+
+    expect(result).toEqual({ ok: true, value: { port: 22 } });
+    const init = fetchMock.mock.calls[0]?.[1];
+    expect(init?.headers).toMatchObject({ Authorization: 'Bearer secret-model-key' });
+    expect(String(init?.body)).not.toContain('secret-model-key');
+    expect(process.env.XAI_API_KEY).toBe(envBefore);
+    expect(JSON.stringify(process.env)).not.toContain('secret-model-key');
+    expectNothingLogged();
+  });
+
+  it('fails closed when the Secrets Manager secret is missing', async () => {
+    vi.stubEnv('XAI_API_KEY', 'env-key');
+    const envBefore = process.env.XAI_API_KEY;
+    vi.spyOn(SecretsManagerClient.prototype, 'send').mockImplementation(async () => {
+      const error = new Error('not found');
+      error.name = 'ResourceNotFoundException';
+      throw error;
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await extract({ ...request(), secretId: 'platsec-xai-api-key' });
+
+    expect(result).toEqual({ ok: false, reason: 'no_key' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(process.env.XAI_API_KEY).toBe(envBefore);
+    expect(JSON.stringify(result)).not.toContain('not found');
+    expect(JSON.stringify(result)).not.toContain('env-key');
+    expectNothingLogged();
+  });
+
+  it('fails closed when the secret read times out', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    vi.stubEnv('XAI_API_KEY', 'env-key');
+    vi.spyOn(SecretsManagerClient.prototype, 'send').mockImplementation(((...args: unknown[]) => {
+      const options = args[1] as { abortSignal?: AbortSignal } | undefined;
+      return new Promise((_resolve, reject) => {
+        const signal = options?.abortSignal;
+        if (signal === undefined) {
+          reject(new Error('missing abort signal'));
+          return;
+        }
+        signal.addEventListener('abort', () => {
+          const error = new Error('aborted');
+          error.name = 'AbortError';
+          reject(error);
+        });
+      });
+    }) as unknown as SecretsManagerClient['send']);
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const pending = extract({ ...request(), secretId: 'platsec-xai-api-key' });
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await expect(pending).resolves.toEqual({ ok: false, reason: 'no_key' });
     expect(fetchMock).not.toHaveBeenCalled();
     expectNothingLogged();
   });

@@ -18,7 +18,7 @@
  * What code decides: whether the bucket is ag-demo-public-10281729, whether
  * the three tags are exactly present, whether a block configuration exists,
  * and whether the one delete is sent. Case text and finding text are not read.
- * The intended state comes only from the intended-public=true tag.
+ * The intended state comes only from the public=true tag.
  */
 import {
   DeletePublicAccessBlockCommand,
@@ -33,8 +33,8 @@ export const TARGET_BUCKET = 'ag-demo-public-10281729' as const;
 
 const AUTO_REMEDIATE_TAG_KEY = 'auto-remediate';
 const AUTO_REMEDIATE_TAG_VALUE = 'true';
-const INTENDED_PUBLIC_TAG_KEY = 'intended-public';
-const INTENDED_PUBLIC_TAG_VALUE = 'true';
+const PUBLIC_TAG_KEY = 'public';
+const PUBLIC_TAG_VALUE = 'true';
 const PURPOSE_TAG_KEY = 'purpose';
 const PURPOSE_TAG_VALUE = 'ag-demo-synthetic';
 const MISSING_TAGS = 'NoSuchTagSet';
@@ -55,8 +55,8 @@ function hasAutoRemediateTag(tags: readonly Tag[]): boolean {
   return hasExactTag(tags, AUTO_REMEDIATE_TAG_KEY, AUTO_REMEDIATE_TAG_VALUE);
 }
 
-function hasIntendedPublicTag(tags: readonly Tag[]): boolean {
-  return hasExactTag(tags, INTENDED_PUBLIC_TAG_KEY, INTENDED_PUBLIC_TAG_VALUE);
+function hasPublicTag(tags: readonly Tag[]): boolean {
+  return hasExactTag(tags, PUBLIC_TAG_KEY, PUBLIC_TAG_VALUE);
 }
 
 function hasDemoPurpose(tags: readonly Tag[]): boolean {
@@ -123,7 +123,7 @@ export async function handleRemoveBucketPublicAccessBlock(
   if (!tagged.ok) {
     return tagged.failure;
   }
-  if (!hasIntendedPublicTag(tagged.tags)) {
+  if (!hasPublicTag(tagged.tags)) {
     return missingRequiredTags();
   }
   if (!hasAutoRemediateTag(tagged.tags)) {
@@ -192,7 +192,7 @@ function missingRequiredTags(): Failure {
     changed: false,
     errorCode: 'MissingRequiredTags',
     errorMessage:
-      'bucket must have tags intended-public=true, auto-remediate=true, and purpose=ag-demo-synthetic',
+      'bucket must have tags public=true, auto-remediate=true, and purpose=ag-demo-synthetic',
   };
 }
 
