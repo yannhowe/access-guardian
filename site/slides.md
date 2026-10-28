@@ -43,20 +43,20 @@ TODO (Yann): who feels this, what it costs today, and who buys the fix. Those fa
 ```mermaid
 flowchart TD
   ct[CloudTrail]
-  sg["EventBridge ag-cloudtrail-sg-ingress-to-lead"]
-  s3["Brief: ag-cloudtrail-s3-public-access-to-lead"]
-  api["API destination ag-lead-webhook"]
-  slack["Slack platsec-demo"]
+  sg[SG rule]
+  s3[S3 rule, brief]
+  api[API destination]
+  slack[Slack channel]
   lead[AG Lead]
   ctx[AG Context]
   chg[AG Change]
-  dry["Fix Lambda dry run"]
-  bld["AG Builder cloud agent"]
+  dry[Dry run]
+  bld[AG Builder]
   yann[Yann]
-  run["Fix Lambda apply true"]
+  run[Apply true]
   pr[Pull request]
   main[Merge to main]
-  tf["terraform-apply.yml"]
+  tf[terraform apply]
 
   ct --> sg --> api --> lead
   ct --> s3 --> api

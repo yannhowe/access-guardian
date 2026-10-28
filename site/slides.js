@@ -20,7 +20,36 @@
         pre.parentNode.replaceChild(diagram, pre);
       }
     }
-    return mermaid.run({ querySelector: '.mermaid' });
+    var fonts = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
+    return fonts.then(function () {
+      return mermaid.run({ querySelector: '.mermaid' });
+    }).then(loosenLabels);
+  }
+
+  // The label box mermaid writes is a few pixels narrower than the text.
+  // Widen it so the last letters stay visible.
+  function loosenLabels() {
+    var boxes = document.querySelectorAll('.mermaid foreignObject');
+    for (var i = 0; i < boxes.length; i++) {
+      var fo = boxes[i];
+      var width = parseFloat(fo.getAttribute('width'));
+      if (!width || width <= 0) {
+        continue;
+      }
+      var extra = 32;
+      fo.setAttribute('width', String(width + extra));
+      var group = fo.parentNode;
+      if (!group || typeof group.getAttribute !== 'function') {
+        continue;
+      }
+      var transform = group.getAttribute('transform') || '';
+      var match = /translate\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\)/.exec(transform);
+      if (!match) {
+        continue;
+      }
+      var x = parseFloat(match[1]) - extra / 2;
+      group.setAttribute('transform', 'translate(' + x + ', ' + match[2] + ')');
+    }
   }
 
   if (typeof mermaid === 'undefined' || typeof Reveal === 'undefined' || typeof RevealMarkdown === 'undefined') {
@@ -28,7 +57,11 @@
     return;
   }
 
-  mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' });
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'strict',
+    flowchart: { htmlLabels: false, padding: 18, nodeSpacing: 28, rankSpacing: 32 },
+  });
 
   Promise.resolve(Reveal.initialize({
     hash: true,
