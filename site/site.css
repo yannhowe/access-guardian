@@ -1,0 +1,46 @@
+body {
+  margin: 0;
+  font-family: "Segoe UI", Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  color: #1b1b1b;
+  background: #f7f7f5;
+}
+
+main {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.25;
+}
+
+a {
+  color: #0b4f8a;
+}
+
+code,
+pre {
+  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, monospace;
+}
+
+pre {
+  overflow: auto;
+  padding: 0.75rem 1rem;
+  background: #fff;
+  border: 1px solid #d9d9d4;
+}
+
+#status:empty {
+  display: none;
+}
+
+#status {
+  padding: 0.75rem 1rem;
+  background: #fff4f4;
+  border: 1px solid #b00020;
+  color: #b00020;
+}
