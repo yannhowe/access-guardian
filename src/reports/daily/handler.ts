@@ -858,7 +858,9 @@ function checkFinding(
 /**
  * Re-check a suspected open port by calling classifyIngress with the request
  * parameters from the event. Tags on those parameters are passed through.
- * classifyIngress applies public=true.
+ * A world-open sensitive port stays a finding, including when the group is
+ * tagged public=true. Any other world-open port is a finding unless that tag
+ * is present with the exact key and value.
  */
 function openPortIsFinding(event: KeptEvent | undefined): boolean {
   if (event === undefined) {

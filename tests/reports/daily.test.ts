@@ -541,6 +541,81 @@ describe('handleDailyReport', () => {
     expectNoSecrets(result);
     expectNothingLogged();
   });
+
+  it('follows classifyIngress for public=true', async () => {
+    const pages = [
+      {
+        Events: [
+          trail({
+            eventId: 'evt-ssh-tagged',
+            eventName: 'AuthorizeSecurityGroupIngress',
+            readOnly: 'false',
+            identity: HUMAN,
+            requestParameters: ingressParams('sg-demo0022', 22, '0.0.0.0/0', [{ key: 'public', value: 'true' }]),
+          }),
+          trail({
+            eventId: 'evt-https-tagged',
+            eventName: 'AuthorizeSecurityGroupIngress',
+            readOnly: 'false',
+            identity: HUMAN,
+            requestParameters: ingressParams('sg-demo0443', 443, '0.0.0.0/0', [{ key: 'public', value: 'true' }]),
+          }),
+          trail({
+            eventId: 'evt-https-open',
+            eventName: 'AuthorizeSecurityGroupIngress',
+            readOnly: 'false',
+            identity: HUMAN,
+            requestParameters: ingressParams('sg-demo0444', 443, '0.0.0.0/0'),
+          }),
+        ],
+      },
+    ];
+    installFetch({
+      summary: 'Three ingress changes.',
+      changesByPrincipal: [],
+      suspectedFindings: [
+        {
+          key: 'cloud:open_port',
+          resource: 'sg-demo0022',
+          reason: 'Port 22 is open.',
+          eventIds: ['evt-ssh-tagged'],
+        },
+        {
+          key: 'cloud:open_port',
+          resource: 'sg-demo0443',
+          reason: 'Port 443 is tagged public.',
+          eventIds: ['evt-https-tagged'],
+        },
+        {
+          key: 'cloud:open_port',
+          resource: 'sg-demo0444',
+          reason: 'Port 443 is open.',
+          eventIds: ['evt-https-open'],
+        },
+      ],
+    });
+    const result = await handleDailyReport({ dryRun: true }, deps(cloudtrailOf(pages), secretsOf()));
+
+    expect(result).toMatchObject({
+      ok: true,
+      posted: false,
+      report: {
+        findings: [
+          {
+            key: 'cloud:open_port',
+            resource: 'sg-demo0022',
+            eventIds: ['evt-ssh-tagged'],
+          },
+          {
+            key: 'cloud:open_port',
+            resource: 'sg-demo0444',
+            eventIds: ['evt-https-open'],
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain('evt-https-tagged');
+  });
 });
 
 describe('buildModelInput', () => {
@@ -612,7 +687,12 @@ function bucketParams(bucket: string) {
   };
 }
 
-function ingressParams(groupId: string, port: number, cidr: string) {
+function ingressParams(
+  groupId: string,
+  port: number,
+  cidr: string,
+  tags?: Array<{ key: string; value: string }>,
+) {
   return {
     groupId,
     ipPermissions: {
@@ -626,6 +706,7 @@ function ingressParams(groupId: string, port: number, cidr: string) {
         },
       ],
     },
+    ...(tags === undefined ? {} : { tags }),
   };
 }
 
