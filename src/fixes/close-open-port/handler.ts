@@ -2,26 +2,46 @@
  * Lambda ag-fix-close-open-port.
  *
  * One close call: ec2:RevokeSecurityGroupIngress.
- * One read: ec2:DescribeSecurityGroupRules, so a missing rule returns
- * changed: false instead of revoking.
+ * Two reads: ec2:DescribeSecurityGroupRules, so a missing rule returns
+ * changed: false instead of revoking, and ec2:DescribeSecurityGroups, which
+ * returns the group tags.
  *
  * apply defaults to false. Only a boolean true revokes. The bot sets that
  * after Yann's yes. This file does not call Grok.
  *
  * What Grok decides: nothing.
  * What code decides: whether the input is one rule, whether that rule is
- * present, and whether the one revoke is sent.
+ * present, whether the group has tag auto-remediate set to true, and whether
+ * the one revoke is sent.
  *
- * The role only revokes a group tagged purpose=ag-demo-synthetic. IAM
- * enforces that tag. A missing tag comes back as the AWS error code.
+ * The role only revokes a group tagged purpose=ag-demo-synthetic and
+ * auto-remediate=true. IAM enforces both tags. The handler also refuses,
+ * including on a dry run, unless auto-remediate=true exactly.
  */
 import {
   DescribeSecurityGroupRulesCommand,
+  DescribeSecurityGroupsCommand,
   EC2Client,
   RevokeSecurityGroupIngressCommand,
 } from '@aws-sdk/client-ec2';
 
 export const ACTION = 'ec2:RevokeSecurityGroupIngress' as const;
+
+const AUTO_REMEDIATE_TAG_KEY = 'auto-remediate';
+const AUTO_REMEDIATE_TAG_VALUE = 'true';
+
+function hasAutoRemediateTag(tags: readonly unknown[]): boolean {
+  for (const tag of tags) {
+    if (typeof tag !== 'object' || tag === null) {
+      continue;
+    }
+    const record = tag as { Key?: unknown; Value?: unknown };
+    if (record.Key === AUTO_REMEDIATE_TAG_KEY && record.Value === AUTO_REMEDIATE_TAG_VALUE) {
+      return true;
+    }
+  }
+  return false;
+}
 
 const GROUP_ID = /^sg-[a-z0-9]{8,17}$/;
 const CASE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
@@ -128,6 +148,19 @@ export async function handleCloseOpenPort(event: unknown, client: AwsClient): Pr
 
   if (matches.length === 0) {
     return { ok: true, changed: false, dryRun: !input.apply, ...body, reason: 'already_closed' };
+  }
+
+  const tagged = await readGroupTags(client, input.securityGroupId);
+  if (!tagged.ok) {
+    return tagged.failure;
+  }
+  if (!hasAutoRemediateTag(tagged.tags)) {
+    return {
+      ok: false,
+      changed: false,
+      errorCode: 'MissingAutoRemediateTag',
+      errorMessage: 'security group must have tag auto-remediate set to true',
+    };
   }
 
   if (!input.apply) {
@@ -245,6 +278,69 @@ function isTarget(rule: LiveRule, target: Planned): boolean {
     rule.toPort === target.port &&
     rule.cidr === target.cidr
   );
+}
+
+type GroupTag = { Key?: unknown; Value?: unknown };
+
+async function readGroupTags(
+  client: AwsClient,
+  groupId: string,
+): Promise<{ ok: true; tags: GroupTag[] } | { ok: false; failure: Extract<FixResult, { ok: false }> }> {
+  let described: unknown;
+  try {
+    described = await client.send(
+      new DescribeSecurityGroupsCommand({
+        GroupIds: [groupId],
+      }),
+    );
+  } catch (err) {
+    return { ok: false, failure: { ok: false, changed: false, ...readAwsError(err) } };
+  }
+
+  const tags = readGroupTagList(described, groupId);
+  if (tags === undefined) {
+    return {
+      ok: false,
+      failure: {
+        ok: false,
+        changed: false,
+        errorCode: 'InvalidResponse',
+        errorMessage: 'DescribeSecurityGroups did not return the security group',
+      },
+    };
+  }
+  return { ok: true, tags };
+}
+
+function readGroupTagList(payload: unknown, groupId: string): GroupTag[] | undefined {
+  if (typeof payload !== 'object' || payload === null) {
+    return undefined;
+  }
+  const groups = (payload as { SecurityGroups?: unknown }).SecurityGroups;
+  if (!Array.isArray(groups)) {
+    return undefined;
+  }
+  const group = groups.find((item) => {
+    return typeof item === 'object' && item !== null && (item as { GroupId?: unknown }).GroupId === groupId;
+  });
+  if (typeof group !== 'object' || group === null) {
+    return undefined;
+  }
+  const raw = (group as { Tags?: unknown }).Tags;
+  if (raw === undefined) {
+    return [];
+  }
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+  const tags: GroupTag[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) {
+      return undefined;
+    }
+    tags.push(item as GroupTag);
+  }
+  return tags;
 }
 
 function readAwsError(err: unknown): { errorCode: string; errorMessage: string } {

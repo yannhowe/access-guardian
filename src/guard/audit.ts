@@ -5,7 +5,9 @@
  * folder is on the allow-list. Mutating policy actions must be on the
  * close-only list. Patterns that open or delete are blocked even if someone
  * adds them to that list. Handlers may only construct SDK commands for
- * actions the policy lists.
+ * actions the policy lists. Every allow-listed handler declares the
+ * auto-remediate tag key and value, and calls hasAutoRemediateTag( before
+ * its one mutating send.
  *
  * The xAI endpoint and the key and model env names may appear only in the
  * Grok client and its unit test.
@@ -345,6 +347,10 @@ function scanFix(fix: FixFolder, input: AuditInput, failures: AuditFailure[]): v
       });
     }
   }
+
+  if (allowed !== undefined) {
+    scanAutoRemediateTag(fix, failures);
+  }
 }
 
 type Metadata = {
@@ -504,6 +510,87 @@ function isIamAction(action: string): boolean {
 function actionName(action: string): string {
   const parts = action.split(':');
   return parts[1] ?? '';
+}
+
+const AUTO_REMEDIATE_TAG_KEY_DECL = "const AUTO_REMEDIATE_TAG_KEY = 'auto-remediate'";
+const AUTO_REMEDIATE_TAG_VALUE_DECL = "const AUTO_REMEDIATE_TAG_VALUE = 'true'";
+
+/**
+ * Allow-listed handlers must declare the tag constants and call
+ * hasAutoRemediateTag( before the mutating command. A function declaration
+ * of that name does not count as the call.
+ */
+function scanAutoRemediateTag(fix: FixFolder, failures: AuditFailure[]): void {
+  const text = fix.handlerText;
+  if (text === null) {
+    return;
+  }
+  const path = `src/fixes/${fix.name}/handler.ts`;
+  if (!text.includes(AUTO_REMEDIATE_TAG_KEY_DECL)) {
+    failures.push({
+      path,
+      message: `fix ${fix.name} does not declare const AUTO_REMEDIATE_TAG_KEY = 'auto-remediate'`,
+    });
+  }
+  if (!text.includes(AUTO_REMEDIATE_TAG_VALUE_DECL)) {
+    failures.push({
+      path,
+      message: `fix ${fix.name} does not declare const AUTO_REMEDIATE_TAG_VALUE = 'true'`,
+    });
+  }
+
+  const mutatingAt = firstMutatingCommandIndex(text);
+  if (mutatingAt === undefined) {
+    return;
+  }
+  const callAt = firstTagCallIndex(text);
+  if (callAt === undefined) {
+    failures.push({
+      path,
+      message: `fix ${fix.name} does not call hasAutoRemediateTag( before its mutating send`,
+    });
+    return;
+  }
+  if (callAt > mutatingAt) {
+    failures.push({
+      path,
+      message: `fix ${fix.name} calls hasAutoRemediateTag( after its mutating send`,
+    });
+  }
+}
+
+function firstMutatingCommandIndex(text: string): number | undefined {
+  for (const match of text.matchAll(COMMAND)) {
+    const name = match[1];
+    if (name === undefined || isReadCommand(name) || match.index === undefined) {
+      continue;
+    }
+    return match.index;
+  }
+  return undefined;
+}
+
+/** The first hasAutoRemediateTag( that is a call, not the function declaration. */
+function firstTagCallIndex(text: string): number | undefined {
+  const needle = 'hasAutoRemediateTag';
+  let from = 0;
+  while (from < text.length) {
+    const index = text.indexOf(needle, from);
+    if (index === -1) {
+      return undefined;
+    }
+    const after = text.slice(index + needle.length);
+    if (!/^\s*\(/.test(after)) {
+      from = index + needle.length;
+      continue;
+    }
+    if (/(?:function\s+)$/.test(text.slice(0, index))) {
+      from = index + needle.length;
+      continue;
+    }
+    return index;
+  }
+  return undefined;
 }
 
 function isRead(action: string): boolean {

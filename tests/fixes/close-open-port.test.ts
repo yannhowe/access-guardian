@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DescribeSecurityGroupRulesCommand,
+  DescribeSecurityGroupsCommand,
   RevokeSecurityGroupIngressCommand,
 } from '@aws-sdk/client-ec2';
 import { readFileSync } from 'node:fs';
@@ -39,18 +40,42 @@ function openRule(over: Record<string, unknown> = {}) {
   };
 }
 
+const GROUP_TAGS = [
+  { Key: 'purpose', Value: 'ag-demo-synthetic' },
+  { Key: 'auto-remediate', Value: 'true' },
+];
+
 function described(rules: unknown[]) {
   return { SecurityGroupRules: rules };
 }
 
-function fakeClient(rules: unknown[]): { client: AwsClient; send: ReturnType<typeof vi.fn> } {
+function groupResponse(tags: Array<{ Key: string; Value: string }> | 'omit') {
+  const group: { GroupId: string; Tags?: Array<{ Key: string; Value: string }> } = { GroupId: 'sg-demo0001' };
+  if (tags !== 'omit') {
+    group.Tags = tags;
+  }
+  return { SecurityGroups: [group] };
+}
+
+function fakeClient(
+  rules: unknown[],
+  options: { tags?: Array<{ Key: string; Value: string }> | 'omit' } = {},
+): { client: AwsClient; send: ReturnType<typeof vi.fn> } {
+  const tags = options.tags === undefined ? GROUP_TAGS : options.tags;
   const send = vi.fn(async (command: unknown) => {
     if (command instanceof DescribeSecurityGroupRulesCommand) {
       return described(rules);
     }
+    if (command instanceof DescribeSecurityGroupsCommand) {
+      return groupResponse(tags);
+    }
     return {};
   });
   return { client: { send }, send };
+}
+
+function revoked(send: ReturnType<typeof vi.fn>): unknown[] {
+  return send.mock.calls.map((call) => call[0]).filter((command) => command instanceof RevokeSecurityGroupIngressCommand);
 }
 
 beforeEach(() => {
@@ -82,8 +107,14 @@ describe('close-open-port handler', () => {
     const revoke = policy.Statement.find((statement) => statement.Action.includes(ACTION));
     expect(revoke?.Resource).toBe('arn:aws:ec2:*:*:security-group/*');
     expect(revoke?.Condition).toEqual({
-      StringEquals: { 'aws:ResourceTag/purpose': 'ag-demo-synthetic' },
+      StringEquals: {
+        'aws:ResourceTag/purpose': 'ag-demo-synthetic',
+        'aws:ResourceTag/auto-remediate': 'true',
+      },
     });
+    const reads = policy.Statement.find((statement) => statement.Action.includes('ec2:DescribeSecurityGroupRules'));
+    expect(reads?.Action).toEqual(['ec2:DescribeSecurityGroupRules', 'ec2:DescribeSecurityGroups']);
+    expect(reads?.Resource).toBe('*');
   });
 
   it('returns a dry run and does not revoke when apply is omitted', async () => {
@@ -100,8 +131,10 @@ describe('close-open-port handler', () => {
       securityGroupId: 'sg-demo0001',
       reason: 'dry_run',
     });
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledTimes(2);
     expect(send.mock.calls[0]?.[0]).toBeInstanceOf(DescribeSecurityGroupRulesCommand);
+    expect(send.mock.calls[1]?.[0]).toBeInstanceOf(DescribeSecurityGroupsCommand);
+    expect(revoked(send)).toEqual([]);
   });
 
   it('does not revoke when apply is false', async () => {
@@ -110,7 +143,8 @@ describe('close-open-port handler', () => {
     const result = await handleCloseOpenPort({ ...EVENT, apply: false }, client);
 
     expect(result).toMatchObject({ ok: true, changed: false, dryRun: true, reason: 'dry_run' });
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(revoked(send)).toEqual([]);
   });
 
   it('revokes once when apply is true and the rule is present', async () => {
@@ -119,8 +153,10 @@ describe('close-open-port handler', () => {
     const result = await handleCloseOpenPort({ ...EVENT, apply: true }, client);
 
     expect(result).toMatchObject({ ok: true, changed: true, dryRun: false, reason: 'revoked' });
-    expect(send).toHaveBeenCalledTimes(2);
-    const revoke = send.mock.calls[1]?.[0];
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(send.mock.calls[1]?.[0]).toBeInstanceOf(DescribeSecurityGroupsCommand);
+    expect(send.mock.calls[1]?.[0].input).toEqual({ GroupIds: ['sg-demo0001'] });
+    const revoke = send.mock.calls[2]?.[0];
     expect(revoke).toBeInstanceOf(RevokeSecurityGroupIngressCommand);
     expect(revoke.input).toEqual({
       GroupId: 'sg-demo0001',
@@ -161,7 +197,7 @@ describe('close-open-port handler', () => {
     const result = await handleCloseOpenPort(event, client);
 
     expect(result).toMatchObject({ ok: true, changed: true, protocol: 'udp', port: 53, cidr: '10.0.0.0/8' });
-    const revoke = send.mock.calls[1]?.[0];
+    const revoke = send.mock.calls[2]?.[0];
     expect(revoke.input.IpPermissions[0]).toMatchObject({
       IpProtocol: 'udp',
       FromPort: 53,
@@ -224,6 +260,9 @@ describe('close-open-port handler', () => {
       if (command instanceof DescribeSecurityGroupRulesCommand) {
         return described([openRule()]);
       }
+      if (command instanceof DescribeSecurityGroupsCommand) {
+        return groupResponse(GROUP_TAGS);
+      }
       throw Object.assign(new Error('User is not authorized'), { name: 'AccessDenied' });
     });
 
@@ -235,5 +274,59 @@ describe('close-open-port handler', () => {
       errorCode: 'AccessDenied',
       errorMessage: 'User is not authorized',
     });
+  });
+
+  it.each([
+    ['the tag is missing', []],
+    ['only the purpose tag is present', [{ Key: 'purpose', Value: 'ag-demo-synthetic' }]],
+    ['the value is false', [{ Key: 'auto-remediate', Value: 'false' }]],
+    ['the value is True', [{ Key: 'auto-remediate', Value: 'True' }]],
+    ['the key is AUTO-REMEDIATE', [{ Key: 'AUTO-REMEDIATE', Value: 'true' }]],
+    ['the key is Auto-Remediate', [{ Key: 'Auto-Remediate', Value: 'true' }]],
+    ['the value is empty', [{ Key: 'auto-remediate', Value: '' }]],
+  ])('refuses when %s and does not revoke', async (_label, tags) => {
+    for (const apply of [false, true]) {
+      const { client, send } = fakeClient([openRule()], { tags });
+
+      const result = await handleCloseOpenPort({ ...EVENT, apply }, client);
+
+      expect(result).toEqual({
+        ok: false,
+        changed: false,
+        errorCode: 'MissingAutoRemediateTag',
+        errorMessage: 'security group must have tag auto-remediate set to true',
+      });
+      expect(revoked(send)).toEqual([]);
+    }
+  });
+
+  it('refuses a dry run when the tag list is omitted', async () => {
+    const { client, send } = fakeClient([openRule()], { tags: 'omit' });
+
+    const result = await handleCloseOpenPort(EVENT, client);
+
+    expect(result).toEqual({
+      ok: false,
+      changed: false,
+      errorCode: 'MissingAutoRemediateTag',
+      errorMessage: 'security group must have tag auto-remediate set to true',
+    });
+    expect(revoked(send)).toEqual([]);
+    expect(send.mock.calls.some((call) => call[0] instanceof DescribeSecurityGroupsCommand)).toBe(true);
+  });
+
+  it('revokes only when the tag is exactly auto-remediate=true', async () => {
+    const { client, send } = fakeClient([openRule()], {
+      tags: [
+        { Key: 'purpose', Value: 'ag-demo-synthetic' },
+        { Key: 'auto-remediate', Value: 'true' },
+        { Key: 'Auto-Remediate', Value: 'True' },
+      ],
+    });
+
+    const result = await handleCloseOpenPort({ ...EVENT, apply: true }, client);
+
+    expect(result).toMatchObject({ ok: true, changed: true, dryRun: false, reason: 'revoked' });
+    expect(revoked(send)).toHaveLength(1);
   });
 });

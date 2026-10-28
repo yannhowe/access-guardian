@@ -78,7 +78,15 @@ function repoInput(over: Partial<AuditInput> = {}): AuditInput {
 }
 
 const HANDLER = [
+  "const AUTO_REMEDIATE_TAG_KEY = 'auto-remediate';",
+  "const AUTO_REMEDIATE_TAG_VALUE = 'true';",
+  'function hasAutoRemediateTag(tags: { Key?: string; Value?: string }[]) {',
+  '  return tags.some((tag) => tag.Key === AUTO_REMEDIATE_TAG_KEY && tag.Value === AUTO_REMEDIATE_TAG_VALUE);',
+  '}',
   'new DescribeSecurityGroupRulesCommand({})',
+  'if (!hasAutoRemediateTag(tags)) {',
+  '  return { ok: false };',
+  '}',
   'new RevokeSecurityGroupIngressCommand({})',
 ].join('\n');
 
@@ -278,6 +286,62 @@ describe('guard', () => {
 
     expect(failures.map((failure) => failure.message)).toContain(
       'fix module does not set permissions_boundary',
+    );
+  });
+
+  it('passes when an allow-listed handler checks the auto-remediate tag before the close', () => {
+    const failures = audit({
+      ...repoInput(),
+      terraform: undefined,
+      fixes: [folder()],
+    });
+
+    expect(failures.filter((failure) => failure.message.includes('hasAutoRemediateTag'))).toEqual([]);
+    expect(failures.filter((failure) => failure.message.includes('AUTO_REMEDIATE_TAG'))).toEqual([]);
+  });
+
+  it('fails when an allow-listed handler does not call hasAutoRemediateTag', () => {
+    const handlerText = [
+      "const AUTO_REMEDIATE_TAG_KEY = 'auto-remediate';",
+      "const AUTO_REMEDIATE_TAG_VALUE = 'true';",
+      'function hasAutoRemediateTag(tags: { Key?: string; Value?: string }[]) {',
+      '  return false;',
+      '}',
+      'new DescribeSecurityGroupRulesCommand({})',
+      'new RevokeSecurityGroupIngressCommand({})',
+    ].join('\n');
+    const failures = audit({
+      ...repoInput(),
+      terraform: undefined,
+      fixes: [folder({ handlerText })],
+    });
+
+    expect(failures.map((failure) => failure.message)).toContain(
+      'fix close-open-port does not call hasAutoRemediateTag( before its mutating send',
+    );
+  });
+
+  it('fails when an allow-listed handler checks the auto-remediate tag after the close', () => {
+    const handlerText = [
+      "const AUTO_REMEDIATE_TAG_KEY = 'auto-remediate';",
+      "const AUTO_REMEDIATE_TAG_VALUE = 'true';",
+      'function hasAutoRemediateTag(tags: { Key?: string; Value?: string }[]) {',
+      '  return false;',
+      '}',
+      'new DescribeSecurityGroupRulesCommand({})',
+      'new RevokeSecurityGroupIngressCommand({})',
+      'hasAutoRemediateTag(tags)',
+    ].join('\n');
+    const failures = audit({
+      ...repoInput(),
+      terraform: undefined,
+      fixes: [folder({ handlerText })],
+    });
+    const messages = failures.map((failure) => failure.message);
+
+    expect(messages).toContain('fix close-open-port calls hasAutoRemediateTag( after its mutating send');
+    expect(messages).not.toContain(
+      'fix close-open-port does not call hasAutoRemediateTag( before its mutating send',
     );
   });
 

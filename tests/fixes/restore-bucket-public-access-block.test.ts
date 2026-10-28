@@ -28,7 +28,10 @@ const HANDLER_PATH = path.join(ROOT, 'src/fixes/restore-bucket-public-access-blo
 const FLAGS = ['BlockPublicAcls', 'IgnorePublicAcls', 'BlockPublicPolicy', 'RestrictPublicBuckets'] as const;
 
 const TAGGED = {
-  TagSet: [{ Key: 'purpose', Value: 'ag-demo-synthetic' }],
+  TagSet: [
+    { Key: 'purpose', Value: 'ag-demo-synthetic' },
+    { Key: 'auto-remediate', Value: 'true' },
+  ],
 };
 
 const BLOCKED = {
@@ -295,12 +298,46 @@ describe('restore-bucket-public-access-block handler', () => {
     }
   });
 
+  it('refuses a dry run and an apply when auto-remediate is not exactly true', async () => {
+    const cases = [
+      { label: 'missing', tags: [{ Key: 'purpose', Value: 'ag-demo-synthetic' }] },
+      {
+        label: 'false',
+        tags: [
+          { Key: 'purpose', Value: 'ag-demo-synthetic' },
+          { Key: 'auto-remediate', Value: 'false' },
+        ],
+      },
+      {
+        label: 'True',
+        tags: [
+          { Key: 'purpose', Value: 'ag-demo-synthetic' },
+          { Key: 'auto-remediate', Value: 'True' },
+        ],
+      },
+    ];
+    for (const entry of cases) {
+      for (const apply of [false, true]) {
+        const { client, send } = fakeClient({ tags: { TagSet: entry.tags } });
+        const result = await handleRestoreBucketPublicAccessBlock({ ...EVENT, apply }, client);
+        expect(result, `${entry.label} apply=${apply}`).toEqual({
+          ok: false,
+          changed: false,
+          errorCode: 'MissingAutoRemediateTag',
+          errorMessage: 'bucket must have tag auto-remediate set to true',
+        });
+        expect(puts(send), entry.label).toEqual([]);
+      }
+    }
+  });
+
   it('accepts the demo tag alongside another tag', async () => {
     const { client, send } = fakeClient({
       tags: {
         TagSet: [
           { Key: 'owner', Value: 'demo' },
           { Key: 'purpose', Value: 'ag-demo-synthetic' },
+          { Key: 'auto-remediate', Value: 'true' },
         ],
       },
     });
