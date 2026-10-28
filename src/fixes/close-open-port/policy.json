@@ -4,7 +4,7 @@
     {
       "Sid": "ReadRules",
       "Effect": "Allow",
-      "Action": ["ec2:DescribeSecurityGroupRules"],
+      "Action": ["ec2:DescribeSecurityGroupRules", "ec2:DescribeSecurityGroups"],
       "Resource": "*"
     },
     {
@@ -14,7 +14,8 @@
       "Resource": "arn:aws:ec2:*:*:security-group/*",
       "Condition": {
         "StringEquals": {
-          "aws:ResourceTag/purpose": "ag-demo-synthetic"
+          "aws:ResourceTag/purpose": "ag-demo-synthetic",
+          "aws:ResourceTag/auto-remediate": "true"
         }
       }
     }

@@ -15,8 +15,9 @@
  *
  * What Grok decides: nothing.
  * What code decides: whether the bucket name is valid, whether the bucket
- * is tagged purpose=ag-demo-synthetic, whether all four Block Public Access
- * flags are already true, and whether the one put is sent.
+ * is tagged purpose=ag-demo-synthetic, whether the bucket has tag
+ * auto-remediate set to true, whether all four Block Public Access flags
+ * are already true, and whether the one put is sent.
  *
  * The four flags on that put are hardcoded true. This file never sends false.
  */
@@ -40,6 +41,17 @@ export const PUBLIC_ACCESS_BLOCK = {
 const PURPOSE = 'ag-demo-synthetic';
 const MISSING_TAGS = 'NoSuchTagSet';
 const MISSING_BLOCK = 'NoSuchPublicAccessBlockConfiguration';
+const AUTO_REMEDIATE_TAG_KEY = 'auto-remediate';
+const AUTO_REMEDIATE_TAG_VALUE = 'true';
+
+function hasAutoRemediateTag(tags: readonly { Key?: unknown; Value?: unknown }[]): boolean {
+  for (const tag of tags) {
+    if (tag.Key === AUTO_REMEDIATE_TAG_KEY && tag.Value === AUTO_REMEDIATE_TAG_VALUE) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /**
  * ag-demo- plus a legal bucket tail. 9 to 63 characters, lowercase, no
@@ -104,6 +116,14 @@ export async function handleRestoreBucketPublicAccessBlock(
   const tagged = await bucketIsTagged(client, input.bucket);
   if (!tagged.ok) {
     return tagged.failure;
+  }
+  if (!hasAutoRemediateTag(tagged.tags)) {
+    return {
+      ok: false,
+      changed: false,
+      errorCode: 'MissingAutoRemediateTag',
+      errorMessage: 'bucket must have tag auto-remediate set to true',
+    };
   }
 
   const blocked = await bucketIsFullyBlocked(client, input.bucket);
@@ -182,7 +202,7 @@ function isDemoBucket(value: string): boolean {
 async function bucketIsTagged(
   client: AwsClient,
   bucket: string,
-): Promise<{ ok: true } | { ok: false; failure: Failure }> {
+): Promise<{ ok: true; tags: Array<{ Key: string; Value: string }> } | { ok: false; failure: Failure }> {
   let described: unknown;
   try {
     described = await client.send(new GetBucketTaggingCommand({ Bucket: bucket }));
@@ -208,7 +228,41 @@ async function bucketIsTagged(
   if (purpose !== PURPOSE) {
     return { ok: false, failure: notTagged() };
   }
-  return { ok: true };
+  const tags = readTagRecords(described);
+  if (tags === 'bad') {
+    return {
+      ok: false,
+      failure: {
+        ok: false,
+        changed: false,
+        errorCode: 'InvalidResponse',
+        errorMessage: 'GetBucketTagging did not return a tag set',
+      },
+    };
+  }
+  return { ok: true, tags };
+}
+
+function readTagRecords(payload: unknown): Array<{ Key: string; Value: string }> | 'bad' {
+  if (typeof payload !== 'object' || payload === null) {
+    return 'bad';
+  }
+  const tagSet = (payload as { TagSet?: unknown }).TagSet;
+  if (!Array.isArray(tagSet)) {
+    return 'bad';
+  }
+  const tags: Array<{ Key: string; Value: string }> = [];
+  for (const item of tagSet) {
+    if (typeof item !== 'object' || item === null) {
+      return 'bad';
+    }
+    const tag = item as { Key?: unknown; Value?: unknown };
+    if (typeof tag.Key !== 'string' || typeof tag.Value !== 'string') {
+      return 'bad';
+    }
+    tags.push({ Key: tag.Key, Value: tag.Value });
+  }
+  return tags;
 }
 
 function notTagged(): Failure {
