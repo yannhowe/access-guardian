@@ -691,8 +691,28 @@ function isReadCommand(name: string): boolean {
  * Opens, deletes public access, IAM, or a policy write.
  * DeletePublicAccessBlock and DeleteBucketPublicAccessBlock never pass in a
  * policy. The SDK command exception does not add those IAM names.
+ *
+ * iam:PutUserPolicy is the one mutating exception. contain-iam-user uses it
+ * to attach a fixed deny-all inline policy. The same fix's reads are the
+ * only other iam strings that pass: GetUser, ListUserTags, GetUserPolicy,
+ * ListAttachedUserPolicies, and ListGroupsForUser. Every other iam action
+ * stays blocked. Every other Put*Policy action stays blocked.
  */
+const CONTAINMENT_IAM_READS = new Set([
+  'iam:GetUser',
+  'iam:ListUserTags',
+  'iam:GetUserPolicy',
+  'iam:ListAttachedUserPolicies',
+  'iam:ListGroupsForUser',
+]);
+
 function isBlocked(action: string): boolean {
+  if (action === 'iam:PutUserPolicy') {
+    return false;
+  }
+  if (CONTAINMENT_IAM_READS.has(action)) {
+    return false;
+  }
   if (action.startsWith('iam:')) {
     return true;
   }

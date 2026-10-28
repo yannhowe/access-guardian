@@ -38,6 +38,12 @@ export const ALLOWED_FIXES = {
     summary: 'Remove Block Public Access on the one bucket tagged public=true',
     undo: 'There is no undo',
   },
+  'contain-iam-user': {
+    findingKey: 'identity:on_leave_user_activity',
+    action: 'iam:PutUserPolicy',
+    summary: 'Attach a deny-all inline policy to one on-leave IAM user',
+    undo: 'Delete the inline policy ag-containment-deny',
+  },
 } as const satisfies Record<
   string,
   {

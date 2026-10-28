@@ -5,8 +5,23 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  GetUserCommand,
+  GetUserPolicyCommand,
+  ListAttachedUserPoliciesCommand,
+  ListGroupsForUserCommand,
+  ListUserTagsCommand,
+  PutUserPolicyCommand,
+} from '@aws-sdk/client-iam';
 import { ALLOWED_FIXES } from '../src/fixes/allow-list.js';
+import {
+  CONTAINMENT_POLICY,
+  POLICY_NAME,
+  containmentDocument,
+  handleContainIamUser,
+  type AwsClient,
+} from '../src/fixes/contain-iam-user/handler.js';
 import { FIX_REGISTRY } from '../src/fixes/registry.js';
 import { audit, type AuditInput, type FixFolder, type SourceFile } from '../src/guard/audit.js';
 import { CLOSE_ONLY_ACTIONS } from '../src/guard/mutating-apis.js';
@@ -128,6 +143,34 @@ function folder(over: Partial<FixFolder> = {}): FixFolder {
   };
 }
 
+function containmentClient(userName: string): { client: AwsClient; send: ReturnType<typeof vi.fn> } {
+  const send = vi.fn(async (command: unknown) => {
+    if (command instanceof ListUserTagsCommand) {
+      return {
+        Tags: [
+          { Key: 'auto-remediate', Value: 'true' },
+          { Key: 'purpose', Value: 'ag-demo-synthetic' },
+        ],
+        IsTruncated: false,
+      };
+    }
+    if (command instanceof GetUserCommand) {
+      return { User: { UserName: userName, Arn: `arn:aws:iam::user/${userName}`, Path: '/' } };
+    }
+    if (command instanceof ListAttachedUserPoliciesCommand) {
+      return { AttachedPolicies: [], IsTruncated: false };
+    }
+    if (command instanceof ListGroupsForUserCommand) {
+      return { Groups: [], IsTruncated: false };
+    }
+    if (command instanceof GetUserPolicyCommand) {
+      throw Object.assign(new Error('The policy does not exist'), { name: 'NoSuchEntityException' });
+    }
+    return {};
+  });
+  return { client: { send }, send };
+}
+
 describe('guard', () => {
   it('lists the fixes we are willing to automate', () => {
     expect(ALLOWED_FIXES['close-open-port']).toEqual({
@@ -148,8 +191,15 @@ describe('guard', () => {
       expect(entry.summary.length).toBeGreaterThan(0);
       expect(entry.undo.length).toBeGreaterThan(0);
     }
+    expect(ALLOWED_FIXES['contain-iam-user']).toEqual({
+      findingKey: 'identity:on_leave_user_activity',
+      action: 'iam:PutUserPolicy',
+      summary: 'Attach a deny-all inline policy to one on-leave IAM user',
+      undo: 'Delete the inline policy ag-containment-deny',
+    });
     expect(CLOSE_ONLY_ACTIONS).toContain('ec2:RevokeSecurityGroupIngress');
     expect(CLOSE_ONLY_ACTIONS).toContain('s3:PutBucketPublicAccessBlock');
+    expect(CLOSE_ONLY_ACTIONS).toContain('iam:PutUserPolicy');
   });
 
   it('passes on this repo', () => {
@@ -188,6 +238,13 @@ describe('guard', () => {
   it.each([
     ['ec2:AuthorizeSecurityGroupIngress'],
     ['iam:PassRole'],
+    ['iam:PutRolePolicy'],
+    ['iam:AttachUserPolicy'],
+    ['iam:PutGroupPolicy'],
+    ['iam:DeleteUser'],
+    ['iam:CreateAccessKey'],
+    ['iam:ListUsers'],
+    ['iam:GetRole'],
     ['s3:PutBucketPolicy'],
     ['s3:DeletePublicAccessBlock'],
     ['s3:DeleteBucketPublicAccessBlock'],
@@ -208,6 +265,62 @@ describe('guard', () => {
     });
 
     expect(failures.some((failure) => failure.message === `blocked action ${action}`)).toBe(true);
+  });
+
+  it('contain-iam-user sends only the exact deny document', async () => {
+    const exact = {
+      Version: '2012-10-17',
+      Statement: [{ Effect: 'Deny', Action: '*', Resource: '*' }],
+    };
+    expect(CONTAINMENT_POLICY).toEqual(exact);
+    expect(POLICY_NAME).toBe('ag-containment-deny');
+    expect(containmentDocument()).toBe(JSON.stringify(exact));
+
+    const handlerText = readFileSync(path.join(root, 'src/fixes/contain-iam-user/handler.ts'), 'utf8');
+    expect(handlerText).toContain('PolicyDocument: containmentDocument()');
+    expect(handlerText.match(/new Put\w*Command/g)).toEqual(['new PutUserPolicyCommand']);
+
+    for (const userName of ['onleave-demo', 'other-demo']) {
+      const { client, send } = containmentClient(userName);
+      const result = await handleContainIamUser(
+        { caseId: 'case-06', userName, hrStatus: 'On leave', apply: true },
+        client,
+      );
+      expect(result).toMatchObject({ ok: true, status: 'ok', changed: true, reason: 'contained' });
+      const puts = send.mock.calls
+        .map((call) => call[0])
+        .filter((command) => command instanceof PutUserPolicyCommand);
+      expect(puts).toHaveLength(1);
+      const document = puts[0]?.input.PolicyDocument ?? '';
+      expect(puts[0]?.input).toEqual({
+        UserName: userName,
+        PolicyName: 'ag-containment-deny',
+        PolicyDocument: JSON.stringify(exact),
+      });
+      const parsed = JSON.parse(document) as {
+        Statement: Array<{ Effect: string; Action: string; Resource: string }>;
+      };
+      expect(parsed.Statement).toHaveLength(1);
+      expect(parsed.Statement[0]).toEqual({ Effect: 'Deny', Action: '*', Resource: '*' });
+      expect(JSON.stringify(parsed)).not.toContain('Allow');
+    }
+
+    const { client, send } = containmentClient('onleave-demo');
+    const blocked = await handleContainIamUser(
+      {
+        caseId: 'case-06',
+        userName: 'onleave-demo',
+        hrStatus: 'On leave',
+        apply: true,
+        policyDocument: JSON.stringify({
+          Version: '2012-10-17',
+          Statement: [{ Effect: 'Allow', Action: '*', Resource: '*' }],
+        }),
+      },
+      client,
+    );
+    expect(blocked).toMatchObject({ ok: false, status: 'refused', changed: false });
+    expect(send.mock.calls.some((call) => call[0] instanceof PutUserPolicyCommand)).toBe(false);
   });
 
   it('blocks a wildcard action', () => {

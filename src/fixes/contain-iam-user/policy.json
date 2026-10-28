@@ -1,0 +1,47 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadUserTags",
+      "Effect": "Allow",
+      "Action": ["iam:ListUserTags"],
+      "Resource": "arn:aws:iam::*:user/*"
+    },
+    {
+      "Sid": "ReadUser",
+      "Effect": "Allow",
+      "Action": ["iam:GetUser"],
+      "Resource": "arn:aws:iam::*:user/*",
+      "Condition": {
+        "StringEquals": {
+          "iam:ResourceTag/auto-remediate": "true",
+          "iam:ResourceTag/purpose": "ag-demo-synthetic"
+        }
+      }
+    },
+    {
+      "Sid": "ReadContainmentAndAdmin",
+      "Effect": "Allow",
+      "Action": ["iam:GetUserPolicy", "iam:ListAttachedUserPolicies", "iam:ListGroupsForUser"],
+      "Resource": "arn:aws:iam::*:user/*",
+      "Condition": {
+        "StringEquals": {
+          "iam:ResourceTag/auto-remediate": "true",
+          "iam:ResourceTag/purpose": "ag-demo-synthetic"
+        }
+      }
+    },
+    {
+      "Sid": "AttachContainmentDeny",
+      "Effect": "Allow",
+      "Action": ["iam:PutUserPolicy"],
+      "Resource": "arn:aws:iam::*:user/*",
+      "Condition": {
+        "StringEquals": {
+          "iam:ResourceTag/auto-remediate": "true",
+          "iam:ResourceTag/purpose": "ag-demo-synthetic"
+        }
+      }
+    }
+  ]
+}
