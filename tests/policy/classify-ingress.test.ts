@@ -167,3 +167,142 @@ describe('classifyIngress', () => {
     expect(classifyIngress(rule({ fromPort: 443, toPort: 443 }), [{ key, value }])).toBe('finding');
   });
 });
+
+describe('sensitive ports outside private space', () => {
+  it('22 from 0.0.0.0/8 is a finding, including on public=true', () => {
+    const ports = { fromPort: 22, toPort: 22, ipv4Cidrs: ['0.0.0.0/8'], ipv6Cidrs: [] as string[] };
+    expect(classifyIngress(rule(ports), PUBLIC_TAG)).toBe('finding');
+    expect(classifyIngress(rule(ports), [])).toBe('finding');
+  });
+
+  it('3389 from 203.0.113.0/24 is a finding', () => {
+    expect(
+      classifyIngress(
+        rule({ fromPort: 3389, toPort: 3389, ipv4Cidrs: ['203.0.113.0/24'], ipv6Cidrs: [] }),
+        PUBLIC_TAG,
+      ),
+    ).toBe('finding');
+  });
+
+  it('22 from 10.0.0.0/16 is ok', () => {
+    expect(
+      classifyIngress(rule({ fromPort: 22, toPort: 22, ipv4Cidrs: ['10.0.0.0/16'], ipv6Cidrs: [] }), PUBLIC_TAG),
+    ).toBe('ok');
+  });
+
+  it('443 from 0.0.0.0/8 is ok', () => {
+    expect(classifyIngress(rule({ fromPort: 443, toPort: 443, ipv4Cidrs: ['0.0.0.0/8'], ipv6Cidrs: [] }), [])).toBe(
+      'ok',
+    );
+  });
+
+  it.each([
+    ['172.32.0.0/16', ['172.32.0.0/16'], []],
+    ['8.0.0.0/4', ['8.0.0.0/4'], []],
+    ['10.0.0.0/7', ['10.0.0.0/7'], []],
+    ['172.0.0.0/11', ['172.0.0.0/11'], []],
+    ['192.168.0.0/15', ['192.168.0.0/15'], []],
+    ['100.0.0.0/9', ['100.0.0.0/9'], []],
+    ['9.0.0.0/8', ['9.0.0.0/8'], []],
+    ['11.0.0.0/8', ['11.0.0.0/8'], []],
+    ['172.15.0.0/16', ['172.15.0.0/16'], []],
+    ['192.169.0.0/16', ['192.169.0.0/16'], []],
+    ['100.128.0.0/16', ['100.128.0.0/16'], []],
+  ])('22 from %s is a finding', (_label, ipv4Cidrs, ipv6Cidrs) => {
+    expect(classifyIngress(rule({ fromPort: 22, toPort: 22, ipv4Cidrs, ipv6Cidrs }), PUBLIC_TAG)).toBe('finding');
+  });
+
+  it('22 from 2001:db8::/32 is a finding', () => {
+    expect(
+      classifyIngress(rule({ fromPort: 22, toPort: 22, ipv4Cidrs: [], ipv6Cidrs: ['2001:db8::/32'] }), PUBLIC_TAG),
+    ).toBe('finding');
+  });
+
+  it.each([
+    ['fe80::/10', 'fe80::/10'],
+    ['fc00::/6', 'fc00::/6'],
+    ['::/0', '::/0'],
+  ])('22 from %s is a finding', (_label, cidr) => {
+    expect(classifyIngress(rule({ fromPort: 22, toPort: 22, ipv4Cidrs: [], ipv6Cidrs: [cidr] }), PUBLIC_TAG)).toBe(
+      'finding',
+    );
+  });
+
+  it('22 from fd00::/8 is ok', () => {
+    expect(
+      classifyIngress(rule({ fromPort: 22, toPort: 22, ipv4Cidrs: [], ipv6Cidrs: ['fd00::/8'] }), PUBLIC_TAG),
+    ).toBe('ok');
+  });
+
+  it.each([
+    ['10.0.0.0/8', ['10.0.0.0/8'], []],
+    ['172.16.0.0/12', ['172.16.0.0/12'], []],
+    ['172.31.255.255/32', ['172.31.255.255/32'], []],
+    ['192.168.1.0/24', ['192.168.1.0/24'], []],
+    ['100.64.0.0/10', ['100.64.0.0/10'], []],
+    ['100.127.255.255/32', ['100.127.255.255/32'], []],
+  ])('22 from %s is ok', (_label, ipv4Cidrs, ipv6Cidrs) => {
+    expect(classifyIngress(rule({ fromPort: 22, toPort: 22, ipv4Cidrs, ipv6Cidrs }), PUBLIC_TAG)).toBe('ok');
+  });
+
+  it.each([
+    ['fc00::/7', 'fc00::/7'],
+    ['fd00::/8', 'fd00::/8'],
+    ['FD00::/8', 'FD00::/8'],
+  ])('22 from %s is ok', (_label, cidr) => {
+    expect(classifyIngress(rule({ fromPort: 22, toPort: 22, ipv4Cidrs: [], ipv6Cidrs: [cidr] }), [])).toBe('ok');
+  });
+
+  it('22 is a finding when any source range is outside private space', () => {
+    expect(
+      classifyIngress(
+        rule({
+          fromPort: 22,
+          toPort: 22,
+          ipv4Cidrs: ['10.0.0.0/16'],
+          ipv6Cidrs: ['fd00::/8', '2001:db8::/32'],
+        }),
+        PUBLIC_TAG,
+      ),
+    ).toBe('finding');
+  });
+
+  it('protocol -1 from 0.0.0.0/8 is a finding on public=true', () => {
+    expect(
+      classifyIngress(
+        rule({ protocol: '-1', fromPort: null, toPort: null, ipv4Cidrs: ['0.0.0.0/8'], ipv6Cidrs: [] }),
+        PUBLIC_TAG,
+      ),
+    ).toBe('finding');
+  });
+
+  it('protocol -1 from 10.0.0.0/16 is ok', () => {
+    expect(
+      classifyIngress(
+        rule({ protocol: '-1', fromPort: null, toPort: null, ipv4Cidrs: ['10.0.0.0/16'], ipv6Cidrs: [] }),
+        PUBLIC_TAG,
+      ),
+    ).toBe('ok');
+  });
+
+  it.each(['not-a-cidr', '10.0.0.0/33', '10.0.0.0', '::/129', '', '010.0.0.0/8'])(
+    'malformed CIDR %j on port 22 is a finding',
+    (cidr) => {
+      expect(
+        classifyIngress(rule({ fromPort: 22, toPort: 22, ipv4Cidrs: [cidr], ipv6Cidrs: [] }), PUBLIC_TAG),
+      ).toBe('finding');
+    },
+  );
+
+  it('a malformed IPv6 CIDR on port 22 is a finding', () => {
+    expect(
+      classifyIngress(rule({ fromPort: 22, toPort: 22, ipv4Cidrs: [], ipv6Cidrs: ['gggg::/64'] }), PUBLIC_TAG),
+    ).toBe('finding');
+  });
+
+  it('443 from a malformed CIDR stays ok', () => {
+    expect(classifyIngress(rule({ fromPort: 443, toPort: 443, ipv4Cidrs: ['not-a-cidr'], ipv6Cidrs: [] }), [])).toBe(
+      'ok',
+    );
+  });
+});
