@@ -1,0 +1,7 @@
+{
+  "name": "contain-iam-user",
+  "findingKey": "identity:on_leave_user_activity",
+  "action": "iam:PutUserPolicy",
+  "description": "Attach a deny-all inline policy to one on-leave IAM user",
+  "callsGrok": false
+}

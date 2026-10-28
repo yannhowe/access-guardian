@@ -11,8 +11,13 @@
  * both by the public=true tag check in the handler and by the IAM
  * tag condition on the fix role. Every other fix stays close-only. Do not
  * add an action that opens or deletes.
+ *
+ * iam:PutUserPolicy is the one containment write. It attaches a fixed
+ * deny-all inline policy to one on-leave IAM user. No other iam action
+ * belongs on this list.
  */
 export const CLOSE_ONLY_ACTIONS = [
   'ec2:RevokeSecurityGroupIngress',
   's3:PutBucketPublicAccessBlock',
+  'iam:PutUserPolicy',
 ] as const;

@@ -7,6 +7,7 @@ locals {
     "close-open-port",
     "restore-bucket-public-access-block",
     "remove-bucket-public-access-block",
+    "contain-iam-user",
   ])
 }
 
