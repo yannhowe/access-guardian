@@ -1,0 +1,7 @@
+{
+  "name": "restore-bucket-public-access-block",
+  "findingKey": "cloud:s3_public_access_block_removed",
+  "action": "s3:PutBucketPublicAccessBlock",
+  "description": "Turn on all four Block Public Access flags for one bucket",
+  "callsGrok": false
+}
