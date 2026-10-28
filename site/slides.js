@@ -88,6 +88,23 @@
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: 'strict',
+    theme: 'base',
+    themeVariables: {
+      darkMode: false,
+      background: 'transparent',
+      fontFamily: 'Avenir Next, Segoe UI, system-ui, sans-serif',
+      primaryColor: '#fffdf8',
+      primaryTextColor: '#122028',
+      primaryBorderColor: '#0a6b63',
+      lineColor: '#52616a',
+      secondaryColor: '#fffdf8',
+      tertiaryColor: '#f5f2eb',
+      textColor: '#122028',
+      mainBkg: '#fffdf8',
+      nodeBorder: '#0a6b63',
+      edgeLabelBackground: '#f5f2eb',
+      edgeLabelColor: '#07534d',
+    },
     flowchart: {
       htmlLabels: true,
       wrappingWidth: 150,
@@ -95,6 +112,7 @@
       nodeSpacing: 18,
       rankSpacing: 22,
       useMaxWidth: true,
+      curve: 'basis',
     },
   });
 

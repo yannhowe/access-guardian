@@ -7,10 +7,109 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/dist/reveal.css" integrity="sha384-tK61vs+AeByBmiQ/i6CLgp/PbaaoB/k7M4J5mlX70GVtBPGUk5avjbXhSwhsf3fS" crossorigin="anonymous">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.2.1/dist/theme/white.css" integrity="sha384-flndleNngtsjA21lEvW9JpgOND8agbgm+1EI+KQFbNa0OcOWGydVQbh+G3H2E1dI" crossorigin="anonymous">
   <style>
-    .reveal { font-size: 30px; }
-    .reveal .mermaid { background: #fff; }
-    .reveal .mermaid svg { max-width: 100%; max-height: 480px; }
-    .reveal section .fine { font-size: 0.7em; }
+    .reveal {
+      --r-background-color: #f5f2eb;
+      --r-main-font: "Avenir Next", "Segoe UI", system-ui, sans-serif;
+      --r-main-font-size: 27px;
+      --r-main-color: #122028;
+      --r-block-margin: 14px;
+      --r-heading-margin: 0 0 18px 0;
+      --r-heading-font: "Avenir Next", "Segoe UI", system-ui, sans-serif;
+      --r-heading-color: #122028;
+      --r-heading-line-height: 1.08;
+      --r-heading-letter-spacing: -0.045em;
+      --r-heading-text-transform: none;
+      --r-heading-font-weight: 600;
+      --r-heading1-size: 3.05em;
+      --r-heading2-size: 1.45em;
+      --r-code-font: "SFMono-Regular", Consolas, ui-monospace, monospace;
+      --r-link-color: #0a6b63;
+      --r-link-color-dark: #07534d;
+      --r-selection-background-color: #dceee9;
+      --r-selection-color: #122028;
+    }
+    .reveal-viewport {
+      background:
+        radial-gradient(circle at 90% 5%, rgba(10, 107, 99, 0.12), transparent 28rem),
+        linear-gradient(180deg, #faf8f2 0%, #f5f2eb 100%);
+      background-color: #f5f2eb;
+    }
+    .reveal .slides,
+    .reveal .slides section {
+      text-align: left;
+    }
+    .reveal h1::before,
+    .reveal h2::before {
+      content: "";
+      display: block;
+      width: 2.4rem;
+      height: 3px;
+      margin-bottom: 0.55em;
+      background: #0a6b63;
+    }
+    .reveal h1::before {
+      width: 3rem;
+      background: #d8693f;
+    }
+    .reveal p {
+      color: #34444c;
+    }
+    .reveal h1 + p {
+      font-size: 1.15em;
+      line-height: 1.45;
+    }
+    .reveal strong {
+      color: #07534d;
+      font-family: "SFMono-Regular", Consolas, ui-monospace, monospace;
+      font-size: 0.62em;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .reveal ul {
+      display: block;
+      margin: 0.15em 0 0.85em;
+      padding: 0;
+      list-style: none;
+    }
+    .reveal ul li {
+      position: relative;
+      margin: 0 0 0.38em;
+      padding-left: 1.05em;
+      color: #34444c;
+      line-height: 1.35;
+    }
+    .reveal ul li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0.48em;
+      width: 0.38em;
+      height: 0.38em;
+      border-radius: 99px;
+      background: #0a6b63;
+    }
+    .reveal code {
+      color: #07534d;
+      background: #dceee9;
+      padding: 0.05em 0.42em;
+      border-radius: 999px;
+      text-transform: none;
+    }
+    .reveal .mermaid { background: transparent; }
+    .reveal .mermaid svg { max-width: 100%; max-height: 500px; }
+    .reveal .mermaid .node rect {
+      rx: 12px;
+      ry: 12px;
+    }
+    .reveal section .fine {
+      color: #52616a;
+      font-size: 0.64em;
+      line-height: 1.45;
+    }
+    .reveal .progress { color: #0a6b63; }
+    .reveal .progress span { background: #0a6b63; }
+    .reveal .controls { color: #07534d; }
     #status:empty { display: none; }
     #status { margin: 0; padding: 0.5rem 1rem; background: #fff4f4; color: #b00020; }
   </style>
