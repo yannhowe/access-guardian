@@ -1,0 +1,52 @@
+{
+  "services": [
+    {
+      "name": "billing-api",
+      "ownerTeam": "payments",
+      "environment": "production",
+      "dependencies": [
+        { "name": "@acme-demo/yaml-lite", "version": "2.3.1" },
+        { "name": "@acme-demo/http-kit", "version": "1.4.0" },
+        { "name": "@acme-demo/log-sink", "version": "0.9.1" }
+      ]
+    },
+    {
+      "name": "ledger-worker",
+      "ownerTeam": "data",
+      "environment": "production",
+      "dependencies": [
+        { "name": "@acme-demo/yaml-lite", "version": "1.9.2" },
+        { "name": "@acme-demo/id-token", "version": "2.0.0" },
+        { "name": "@acme-demo/log-sink", "version": "0.9.1" }
+      ]
+    },
+    {
+      "name": "portal-web",
+      "ownerTeam": "web",
+      "environment": "staging",
+      "dependencies": [
+        { "name": "@acme-demo/yaml-lite", "version": "2.4.3" },
+        { "name": "@acme-demo/http-kit", "version": "1.4.0" },
+        { "name": "@acme-demo/id-token", "version": "2.0.0" }
+      ]
+    },
+    {
+      "name": "notify-relay",
+      "ownerTeam": "messaging",
+      "environment": "production",
+      "dependencies": [
+        { "name": "@acme-demo/http-kit", "version": "1.2.5" },
+        { "name": "@acme-demo/log-sink", "version": "0.9.1" }
+      ]
+    },
+    {
+      "name": "directory-sync",
+      "ownerTeam": "identity",
+      "environment": "staging",
+      "dependencies": [
+        { "name": "@acme-demo/id-token", "version": "2.0.0" },
+        { "name": "@acme-demo/log-sink", "version": "0.8.4" }
+      ]
+    }
+  ]
+}

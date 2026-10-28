@@ -65,6 +65,7 @@ The client reads `XAI_API_KEY` from the environment. `XAI_MODEL` overrides the d
 - `tests/fixes/close-open-port.test.ts`: a fake AWS client. Default is dry-run. One `send` when apply is set. Bad input does not send.
 - `tests/guard.test.ts`: the tree passes, and a fix off the list, a second action, or an xAI call outside the client fails.
 - `src/extractors/advisory/README.md`: the empty advisory reader slot.
+- `inventory/services.json`: synthetic services and the exact npm versions they run. Teammates read it to see whether an advisory package is installed.
 
 Commands:
 
@@ -76,6 +77,10 @@ npx tsc --noEmit
 ## Advisory reader
 
 Build the advisory reader in `src/extractors/advisory/` when a brief asks for it, following the writing-extractors skill. Leave the CloudTrail path on structured fields. Do not add a second Grok client. When the module exists, replace the empty-slot test with tests that mock `fetch`.
+
+## Service inventory
+
+`inventory/services.json` is synthetic. Teammates read it to decide whether an advisory affects a service we run. `@acme-demo/yaml-lite` is on `billing-api` at `2.3.1` (affected), on `ledger-worker` at `1.9.2` (affected, old line, no fix), and on `portal-web` at `2.4.3` (fixed). `notify-relay` and `directory-sync` do not use it. Versions in the file are exact. This repo does not match version ranges. See `inventory/README.md`.
 
 ## Trade-off
 
