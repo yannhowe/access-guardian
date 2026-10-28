@@ -16,9 +16,9 @@ Dry-run is the default. The Lambda changes AWS only when the event has `apply` s
 
 ## How a case arrives
 
-Two triggers, both outside this repository.
+Two triggers. The security group CloudTrail rule is Terraform. Slack, and the S3 CloudTrail rule, stay outside this repository.
 
-1. CloudTrail. EventBridge rule `ag-cloudtrail-sg-ingress-to-lead` matches successful `AuthorizeSecurityGroupIngress` only. API destination `ag-lead-webhook` POSTs a short JSON body to the AG Lead routine webhook. That path has no Lambda. The pieces are listed in [intake.md](intake.md). A second rule, `ag-cloudtrail-s3-public-access-to-lead`, is created outside Terraform (manual). Its event pattern is not written in this repository. TODO: move that rule into `infra/`.
+1. CloudTrail. EventBridge rule `ag-cloudtrail-sg-ingress-to-lead` matches successful `AuthorizeSecurityGroupIngress` and `ModifySecurityGroupRules`. API destination `ag-lead-webhook` POSTs a short JSON body to the AG Lead routine webhook. That path has no Lambda. The rule and its target are in `infra/intake.tf`. The connection and the API destination are not. The pieces are listed in [intake.md](intake.md). A second rule, `ag-cloudtrail-s3-public-access-to-lead`, is created outside Terraform (manual). Its event pattern is not written in this repository. TODO: move that rule into `infra/`.
 2. Slack. A channel listener on `platsec-demo`, and only for a message that tags `@AG-lead`. No Slack code lives here.
 
 The CloudTrail body is structured, so the bot reads it in code. Grok is not used to parse it. Slack text is free text. Grok is called only when code cannot parse that text, and only through the one client.
@@ -65,4 +65,4 @@ After Yann's yes, invoke the same function with `"apply": true`. A successful re
 
 The same dry-run rule applies to `ag-fix-restore-bucket-public-access-block` and `ag-fix-remove-bucket-public-access-block`. Those events carry `bucket` and `apply`. They do not carry `caseId`.
 
-[aws-setup.md](aws-setup.md) lists the OIDC provider, the plan and apply roles, the boundary, the state bucket, and the bots' invoke-only access. Those are created by hand. Terraform only manages `ag-fix-*`.
+[aws-setup.md](aws-setup.md) lists the OIDC provider, the plan and apply roles, the boundary, the state bucket, and the bots' invoke-only access. Those are created by hand. Terraform manages `ag-fix-*`, rule `ag-cloudtrail-sg-ingress-to-lead`, and that rule's target. It does not manage the EventBridge connection, its secret, the API destination, or the S3 rule.

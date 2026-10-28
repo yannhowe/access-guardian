@@ -86,7 +86,7 @@ flowchart TD
   publicTag --> removeFn
 ```
 
-<p class="fine">Same diagram as the README. The EventBridge rules are created by hand and are not in this repo. A fix runs when the guards and the opt-in tags pass. The handler dry-runs unless apply is true. A human is asked for intent, a build, a merge, or a guard change.</p>
+<p class="fine">Same diagram as the README. The security group EventBridge rule is in Terraform. The S3 rule is still created by hand. A fix runs when the guards and the opt-in tags pass. The handler dry-runs unless apply is true. A human is asked for intent, a build, a merge, or a guard change.</p>
 
 ---
 
@@ -94,7 +94,7 @@ flowchart TD
 
 - **close-open-port.** One exact revoke: a single port or a from-to range, IPv4 or IPv6, or protocol -1 with no port. A sensitive port, a range that covers one, or protocol -1 is a finding when the source is outside private space.
 - **contain-iam-user.** On leave (`identity:on_leave_user_activity`) or Not in HR (`identity:suspicious_user_activity`). The boundary allows only the six IAM user actions.
-- **Rule edits.** The daily report reads `ModifySecurityGroupRules` and judges each rule with `classifyIngress()`. A malformed edit is `ingress unparsed` and is not treated as ok. The hand-built EventBridge rule is not in this repo.
+- **Rule edits.** The daily report reads `ModifySecurityGroupRules` and judges each rule with `classifyIngress()`. A malformed edit is `ingress unparsed` and is not treated as ok. Rule `ag-cloudtrail-sg-ingress-to-lead` is in Terraform and matches that event plus `AuthorizeSecurityGroupIngress`. The S3 rule is still created by hand.
 - **Daily report.** After apply, set the secret `ag-report-daily-slack-bot-token`. Terraform creates the name and does not set the value.
 
 ---
