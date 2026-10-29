@@ -8,15 +8,13 @@ Automated triage and fixes for risky cloud changes.
 
 **Problem**
 
-- Cloud teams already have too many changes to review, and agentic tools will keep adding more.
-- Checking whether a change is legitimate is slow, so real risk gets lost in the volume.
-- Red flags: a user on leave or not in HR making changes, a bucket's public or private state flipped against its intent, a sensitive port opened to any outside range.
+- A person marked on leave in HR who is still making changes probably had their keys stolen, or they are working on holiday.
+- How bad that is depends on severity. On-prem this is rarer. In cloud, country of origin is an extra signal.
 
 **Assumptions**
 
-- If someone on leave is making changes, their keys or session were probably stolen.
-- Tags record intended state (`public=true`, `auto-remediate=true`).
-- CloudTrail, IAM and HR are the source of truth, not what anyone claims.
+- Tags that record intended state, such as `public=true`, are a weak point. A bad tag can make a bad state look intended. That is partly a process problem.
+- Trust CloudTrail, IAM, and HR, not what anyone claims. They are extra context for a human decision, not a hard gate.
 
 ---
 
@@ -103,11 +101,19 @@ flowchart TD
 
 **Trade-offs**
 
-- Writing, vetting and testing every rule takes real effort, but it pays off quickly in cases that close themselves.
-- It depends on correct tags. Anything untagged gets reverted to private.
-- Each fix does exactly one hardcoded action, which is safe but narrow.
+- Separate bots stay a strength. Lead, Context, Change, and Builder each keep one job.
+- Blocking a bad change before it lands is hard, and CI/CD tooling for that already exists. This project watches changes that skipped that tooling and show up in CloudTrail.
 
-**What's next**
+**Done**
 
-- Analyse CloudTrail for the most frequent changes and build the highest-leverage rules first.
-- Block bad changes before they happen, such as public buckets and untagged deploys, with deny policies.
+- `ag-fix-contain-iam-user` attaches the inline deny `ag-containment-deny` to one risky IAM user.
+- `ag-fix-close-open-port` closes a sensitive port whose source sits outside private address space.
+
+---
+
+## What's next
+
+- Two roadmap inputs: the most frequent change types in CloudTrail, and a Checkov list of common misconfigurations.
+- Cover each resource type, and the ways that type can be misconfigured. Later, CVEs via Dependabot.
+- Extend the `writing-remediators` skill so AG Builder can cover new resources and new misconfigurations.
+- Add scanner results and Dependabot to AG Context. More sources of truth help.
